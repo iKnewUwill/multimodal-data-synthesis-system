@@ -131,6 +131,7 @@ class MultimodalSynthesisUI:
     def __init__(self):
         self.graph = None
         self.current_task_id = None
+        self.is_running = False
     
     def create_interface(self):
         """创建 Gradio 界面"""
@@ -217,6 +218,8 @@ class MultimodalSynthesisUI:
                             
                             start_btn = gr.Button("🚀 开始合成", variant="primary", size="lg")
                             stop_btn = gr.Button("⏹️ 停止", variant="stop", size="lg")
+
+                            stop_status = gr.Markdown("")
                         
                         # 右侧：结果显示区域
                         with gr.Column(scale=2):
@@ -272,10 +275,15 @@ class MultimodalSynthesisUI:
                             gr.Markdown("### 💾 导出结果")
                             with gr.Row():
                                 export_json_btn = gr.Button("📥 导出 JSON")
-                                export_path = gr.Textbox(
+                                export_path_display = gr.Textbox(
                                     label="导出路径",
                                     interactive=False
                                 )
+                                export_status = gr.Markdown("")
+                            export_download = gr.File(
+                                label="下载文件",
+                                visible=True
+                            )
                 
                 # Tab 2: LLM 配置
                 with gr.Tab("🔧 LLM 配置"):
@@ -419,9 +427,13 @@ class MultimodalSynthesisUI:
                         "0/0", "--", "0", 0,
                         "<div class='status-badge status-failed'>❌ 请先上传文件</div>",
                         "<div class='scrollable-box'>请先上传文件</div>",
-                        "<div class='scrollable-box'>暂无数据</div>"
+                        "<div class='scrollable-box'>暂无数据</div>",
+                        ""
                     )
                     return
+
+                # 设置运行标志
+                self.is_running = True
 
                 # 确定任务类型
                 final_task_type = custom_task_value if task_type_value == "自定义" else task_type_value
@@ -499,7 +511,8 @@ class MultimodalSynthesisUI:
                     f"0/{int(max_iter)}", f"{init_diff:.2f}", "0", 0,
                     f"<div class='status-badge status-running'>🚀 开始合成 - 任务ID: {task_id}</div>",
                     f"<div class='scrollable-box'><p>📋 任务类型：{final_task_type}</p>{file_summary}{doc_summary}<p>🔢 最大迭代：{max_iter}</p></div>",
-                    "<div class='scrollable-box'>暂无数据</div>"
+                    "<div class='scrollable-box'>暂无数据</div>",
+                    ""
                 )
 
                 try:
@@ -508,6 +521,20 @@ class MultimodalSynthesisUI:
                     all_iterations_html = ""
 
                     for iteration in range(1, int(max_iter) + 1):
+                        # 检查是否停止
+                        if not self.is_running:
+                            yield (
+                                f"{iteration-1}/{int(max_iter)}",
+                                f"{state.current_difficulty:.2f}",
+                                str(len(state.history_qa_pairs)),
+                                int((iteration-1) / int(max_iter) * 100),
+                                "<div class='status-badge status-failed'>⏹️ 用户停止</div>",
+                                f"<div class='scrollable-box'>{all_iterations_html}</div>",
+                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>",
+                                "⏹️ 已停止"
+                            )
+                            break
+
                         # 手动执行每个步骤
                         state.current_iteration = iteration
                         state.current_difficulty = min(
@@ -548,7 +575,8 @@ class MultimodalSynthesisUI:
                                 progress_percent,
                                 "<div class='status-badge status-running'>⏳ 提议者工作中...</div>",
                                 f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>"
+                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>",
+                                ""
                             )
 
                             # 求解者
@@ -572,7 +600,8 @@ class MultimodalSynthesisUI:
                                 progress_percent,
                                 "<div class='status-badge status-running'>⏳ 求解者工作中...</div>",
                                 f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>"
+                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>",
+                                ""
                             )
 
                             # 验证者
@@ -625,7 +654,8 @@ class MultimodalSynthesisUI:
                                 progress_percent,
                                 f"<div class='status-badge status-running'>🔄 迭代 {iteration}/{int(max_iter)} 完成</div>",
                                 f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                validated_html
+                                validated_html,
+                                ""
                             )
 
                         except Exception as e:
@@ -640,7 +670,8 @@ class MultimodalSynthesisUI:
                                 progress_percent,
                                 "<div class='status-badge status-failed'>❌ 执行失败</div>",
                                 f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                validated_html if 'validated_html' in locals() else "<div class='scrollable-box'>暂无数据</div>"
+                                validated_html if 'validated_html' in locals() else "<div class='scrollable-box'>暂无数据</div>",
+                                ""
                             )
 
                     # 完成
@@ -657,6 +688,7 @@ class MultimodalSynthesisUI:
                     output_file = settings.OUTPUT_DIR / f"{task_id}.json"
                     save_json(result.dict(), output_file)
 
+                    self.is_running = False
                     yield (
                         f"{int(max_iter)}/{int(max_iter)}",
                         f"{state.current_difficulty:.2f}",
@@ -664,15 +696,18 @@ class MultimodalSynthesisUI:
                         100,
                         f"<div class='status-badge status-completed'>✅ 合成完成！有效问答对: {len(state.history_qa_pairs)}</div>",
                         f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                        validated_html
+                        validated_html,
+                        "✅ 完成"
                     )
 
                 except Exception as e:
+                    self.is_running = False
                     yield (
                         "错误", "--", "0", 0,
                         f"<div class='status-badge status-failed'>❌ 合成失败: {str(e)}</div>",
                         f"<div class='scrollable-box'><p style='color: red;'>错误: {str(e)}</p></div>",
-                        "<div class='scrollable-box'>暂无数据</div>"
+                        "<div class='scrollable-box'>暂无数据</div>",
+                        f"❌ 失败: {str(e)}"
                     )
             
             start_btn.click(
@@ -687,13 +722,14 @@ class MultimodalSynthesisUI:
                     difficulty_increment
                 ],
                 outputs=[
-                    current_iteration, 
-                    current_difficulty, 
-                    valid_count, 
-                    progress_bar, 
-                    status_text, 
-                    iteration_display, 
-                    validated_qa_display
+                    current_iteration,
+                    current_difficulty,
+                    valid_count,
+                    progress_bar,
+                    status_text,
+                    iteration_display,
+                    validated_qa_display,
+                    stop_status
                 ]
             )
             
@@ -719,6 +755,17 @@ class MultimodalSynthesisUI:
                     max_tokens_input
                 ],
                 outputs=[llm_config_status]
+            )
+
+            def stop_synthesis():
+                """停止数据合成"""
+                self.is_running = False
+                return "⏹️ 正在停止..."
+
+            stop_btn.click(
+                fn=stop_synthesis,
+                inputs=[],
+                outputs=[stop_status]
             )
             
             def save_prompts_func(p_sys, p_user, s_sys, s_user, v_sys, v_user):
@@ -746,7 +793,27 @@ class MultimodalSynthesisUI:
                 ],
                 outputs=[prompts_status]
             )
-        
+
+            def export_json():
+                """导出最近的合成结果为 JSON"""
+                try:
+                    # 获取输出目录中最新的文件
+                    output_files = list(settings.OUTPUT_DIR.glob("*.json"))
+                    if not output_files:
+                        return "", "❌ 没有可导出的结果", None
+
+                    # 按修改时间排序，获取最新的文件
+                    latest_file = max(output_files, key=lambda f: f.stat().st_mtime)
+                    return str(latest_file), f"✅ 已导出到: {latest_file}", str(latest_file)
+                except Exception as e:
+                    return "", f"❌ 导出失败：{str(e)}", None
+
+            export_json_btn.click(
+                fn=export_json,
+                inputs=[],
+                outputs=[export_path_display, export_status, export_download]
+            )
+
         return interface
 
 
