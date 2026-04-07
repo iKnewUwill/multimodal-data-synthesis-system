@@ -1,4 +1,4 @@
-"""Multi-Agent 系统实现"""
+"""Multi-Agent 系统实现 - 金融财务分析"""
 
 import json
 import logging
@@ -12,7 +12,7 @@ from src.models import (
     ProposerOutput, SolverOutput, ValidationResult,
     QAPair, IterationState
 )
-from src.utils import get_image_data_url, extract_json_from_text, setup_logger
+from src.utils import extract_json_from_text, setup_logger
 
 
 # 设置日志
@@ -20,7 +20,7 @@ logger = setup_logger("agents", settings.LOG_DIR, settings.LOG_LEVEL)
 
 
 class MultimodalLLMClient:
-    """多模态 LLM 客户端"""
+    """LLM 客户端 - 支持金融数据"""
     
     def __init__(self, config=None):
         self.config = config or llm_config
@@ -31,30 +31,14 @@ class MultimodalLLMClient:
             max_retries=self.config.max_retries
         )
     
-    def call_with_images(
+    def call_with_financial_data(
         self,
         system_prompt: str,
         user_prompt: str,
-        image_paths: List[str],
+        financial_data_str: Optional[str] = None,
         temperature: Optional[float] = None
     ) -> str:
-        """调用支持图片的 LLM（保持向后兼容）"""
-        return self.call_with_content(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            image_paths=image_paths,
-            temperature=temperature
-        )
-
-    def call_with_content(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        image_paths: List[str] = None,
-        file_contents: List[str] = None,
-        temperature: Optional[float] = None
-    ) -> str:
-        """调用支持图片和文档的 LLM"""
+        """调用 LLM 处理金融数据"""
         try:
             # 构建消息
             messages = [
@@ -64,22 +48,12 @@ class MultimodalLLMClient:
             # 构建用户消息
             content = [{"type": "text", "text": user_prompt}]
 
-            # 添加图片
-            if image_paths:
-                for image_path in image_paths:
-                    image_url = get_image_data_url(image_path)
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": image_url}
-                    })
-
-            # 添加文档内容
-            if file_contents:
-                for doc_content in file_contents:
-                    content.append({
-                        "type": "text",
-                        "text": f"\n文档内容：\n{doc_content}"
-                    })
+            # 添加金融数据内容
+            if financial_data_str:
+                content.append({
+                    "type": "text",
+                    "text": f"\n财务数据：\n{financial_data_str}"
+                })
 
             messages.append({"role": "user", "content": content})
 
@@ -99,7 +73,7 @@ class MultimodalLLMClient:
 
 
 class ProposerAgent:
-    """提议者 Agent - 生成新的问答对"""
+    """提议者 Agent - 生成金融分析问答对"""
     
     def __init__(self, llm_client: MultimodalLLMClient):
         self.llm_client = llm_client
@@ -107,38 +81,45 @@ class ProposerAgent:
     
     def propose(
         self,
-        image_paths: List[str] = None,
-        file_contents: List[str] = None,
-        task_type: str = None,
+        financial_data: Optional[Dict[str, Any]] = None,
+        task_type: Optional[str] = None,
         difficulty: float = 0.3,
-        history_qa_pairs: List[QAPair] = None
+        history_qa_pairs: Optional[List[QAPair]] = None
     ) -> ProposerOutput:
-        """生成新的问答对"""
+        """基于金融数据生成新的问答对"""
         logger.info(f"提议者开始生成问答对 - 难度: {difficulty}")
 
         try:
             # 格式化 Prompt
             system_prompt, user_prompt = self.prompts_config.format_proposer_prompt(
-                task_type=task_type,
+                task_type=task_type or "金融财务问答",
                 difficulty_level=difficulty,
-                history_qa_pairs=[qa.dict() for qa in history_qa_pairs] if history_qa_pairs else None
+                history_qa_pairs=[qa.model_dump() for qa in history_qa_pairs] if history_qa_pairs else None
             )
 
-            # 调用 LLM（支持图片和文档）
-            response = self.llm_client.call_with_content(
+            # 将financial_data转换为JSON字符串
+            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+
+            # 调用 LLM
+            response = self.llm_client.call_with_financial_data(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                image_paths=image_paths,
-                file_contents=file_contents
+                financial_data_str=financial_data_str
             )
 
-            # 解析响应
+            # 解析响应 - 适配新的中文格式
             result = extract_json_from_text(response)
 
+            # 映射中文字段到英文结构（保持向后兼容）
             output = ProposerOutput(
-                question=result["question"],
-                answer=result["answer"]
+                question=result.get("问题", result.get("question", "")),
+                answer=result.get("分析结论", result.get("answer", ""))
             )
+            # 存储完整的分析结果到extra字段
+            if "分析过程" in result:
+                output.analysis_process = result["分析过程"]
+            if "分析结论" in result:
+                output.conclusion = result["分析结论"]
 
             logger.info(f"提议者生成问题: {output.question[:50]}...")
             return output
@@ -149,7 +130,7 @@ class ProposerAgent:
 
 
 class SolverAgent:
-    """求解者 Agent - 尝试回答问题"""
+    """求解者 Agent - 回答金融分析问题"""
     
     def __init__(self, llm_client: MultimodalLLMClient):
         self.llm_client = llm_client
@@ -157,31 +138,40 @@ class SolverAgent:
     
     def solve(
         self,
-        image_paths: List[str] = None,
-        file_contents: List[str] = None,
-        question: str = None
+        financial_data: Optional[Dict[str, Any]] = None,
+        question: Optional[str] = None
     ) -> SolverOutput:
-        """回答问题"""
-        logger.info(f"求解者开始回答问题: {question[:50]}...")
+        """基于金融数据回答问题"""
+        logger.info(f"求解者开始回答问题: {question[:50] if question else 'N/A'}...")
 
         try:
             # 格式化 Prompt
             system_prompt, user_prompt = self.prompts_config.format_solver_prompt(
-                question=question
+                question=question or ""
             )
 
-            # 调用 LLM（支持图片和文档）
-            response = self.llm_client.call_with_content(
+            # 将financial_data转换为JSON字符串
+            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+
+            # 调用 LLM
+            response = self.llm_client.call_with_financial_data(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                image_paths=image_paths,
-                file_contents=file_contents
+                financial_data_str=financial_data_str
             )
 
-            # 解析响应
+            # 解析响应 - 适配新的中文格式
             result = extract_json_from_text(response)
 
-            output = SolverOutput(answer=result["answer"])
+            # 映射字段
+            output = SolverOutput(
+                answer=result.get("分析结论", result.get("answer", ""))
+            )
+            # 存储完整的分析结果
+            if "分析过程" in result:
+                output.analysis_process = result["分析过程"]
+            if "分析结论" in result:
+                output.conclusion = result["分析结论"]
 
             logger.info(f"求解者生成答案: {output.answer[:50]}...")
             return output
@@ -201,29 +191,30 @@ class ValidatorAgent:
     
     def validate(
         self,
-        image_paths: List[str] = None,
-        file_contents: List[str] = None,
-        question: str = None,
-        reference_answer: str = None,
-        predicted_answer: str = None
+        financial_data: Optional[Dict[str, Any]] = None,
+        question: Optional[str] = None,
+        reference_answer: Optional[str] = None,
+        predicted_answer: Optional[str] = None
     ) -> ValidationResult:
-        """验证答案"""
-        logger.info(f"验证者开始验证答案")
+        """验证答案的正确性"""
+        logger.info("验证者开始验证答案")
 
         try:
             # 格式化 Prompt
             system_prompt, user_prompt = self.prompts_config.format_validator_prompt(
-                question=question,
-                reference_answer=reference_answer,
-                predicted_answer=predicted_answer
+                question=question or "",
+                reference_answer=reference_answer or "",
+                predicted_answer=predicted_answer or ""
             )
 
-            # 调用 LLM（支持图片和文档）
-            response = self.llm_client.call_with_content(
+            # 将financial_data转换为JSON字符串
+            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+
+            # 调用 LLM
+            response = self.llm_client.call_with_financial_data(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                image_paths=image_paths,
-                file_contents=file_contents,
+                financial_data_str=financial_data_str,
                 temperature=0.1  # 验证时使用较低温度
             )
 
@@ -231,9 +222,9 @@ class ValidatorAgent:
             result = extract_json_from_text(response)
 
             validation = ValidationResult(
-                is_valid=result["is_valid"],
-                similarity_score=result["similarity_score"],
-                reason=result["reason"]
+                is_valid=result.get("is_valid", False),
+                similarity_score=result.get("similarity_score", 0.0),
+                reason=result.get("reason", "")
             )
 
             logger.info(

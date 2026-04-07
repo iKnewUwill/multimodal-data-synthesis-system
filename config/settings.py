@@ -33,6 +33,15 @@ class SystemSettings(BaseModel):
         description="合成数据输出目录"
     )
     
+    # 数据库路径
+    DATABASE_PATH: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent / "data" / "synthesis.db",
+        description="SQLite数据库路径"
+    )
+    
+    # 最大加载任务数
+    MAX_LOAD_TASKS: int = Field(default=100, description="页面刷新时最大加载任务数")
+    
     # 日志目录
     LOG_DIR: Path = Field(
         default_factory=lambda: Path(__file__).parent.parent / "logs",
@@ -56,10 +65,19 @@ class SystemSettings(BaseModel):
     
     # 验证通过阈值
     VALIDATION_THRESHOLD: float = Field(default=0.8, description="验证通过的语义相似度阈值")
+
+    # Execution & Performance Settings
+    PARALLEL_TASK_COUNT: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="并行任务数量（同时运行的合成任务数）"
+    )
     
     def __init__(self, **data):
         super().__init__(**data)
         # 创建必要的目录
+        self.DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         self.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         self.LOG_DIR.mkdir(parents=True, exist_ok=True)

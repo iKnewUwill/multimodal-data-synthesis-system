@@ -1,21 +1,24 @@
-"""Web UI - 基于 Gradio 的可视化界面"""
+"""Web UI - 基于 Gradio 的可视化界面（金融财务数据合成）"""
 
 import os
 import json
 import gradio as gr
 from pathlib import Path
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
+import threading
+from queue import Queue
+import concurrent.futures
 
 from config.llm_config import llm_config
 from config.prompts import prompts_config
 from config.settings import settings
 from src.models import (
-    SynthesisTask, ImageInfo, AgentState,
-    TaskType, SynthesisResult
+    FinancialTaskInput, FinancialTaskResult, TaskStatus, TaskType
 )
 from src.graph import MultimodalSynthesisGraph
-from src.utils import generate_task_id, save_json, read_document_content, get_file_type
+from src.task_manager import TaskManager
+from src.utils import save_json
 
 
 class MultimodalSynthesisUI:
@@ -58,45 +61,33 @@ class MultimodalSynthesisUI:
         border-radius: 8px;
         border: 2px solid #e0e0e0;
     }
-    .iteration-box {
-        border-left: 4px solid #333333;
-        padding: 15px;
-        margin: 10px 0;
-        background: #ffffff;
+    .task-item {
+        padding: 10px;
+        margin: 5px 0;
         border-radius: 5px;
         border: 1px solid #e0e0e0;
+        cursor: pointer;
+        transition: all 0.3s;
     }
-    .proposer-output {
+    .task-item:hover {
+        background: #f0f8ff;
+        border-color: #2196F3;
+    }
+    .task-pending {
+        background: #fff9c4;
+        border-left: 4px solid #ffc107;
+    }
+    .task-processing {
         background: #e3f2fd;
-        border-left: 5px solid #2196F3;
-        border: 2px solid #2196F3;
-        padding: 15px;
-        margin: 10px 0;
-        border-radius: 8px;
+        border-left: 4px solid #2196F3;
     }
-    .solver-output {
-        background: #f3e5f5;
-        border-left: 5px solid #9c27b0;
-        border: 2px solid #9c27b0;
-        padding: 15px;
-        margin: 10px 0;
-        border-radius: 8px;
+    .task-completed {
+        background: #d4edda;
+        border-left: 4px solid #28a745;
     }
-    .validator-output {
-        background: #e8f5e9;
-        border-left: 5px solid #4caf50;
-        border: 2px solid #4caf50;
-        padding: 15px;
-        margin: 10px 0;
-        border-radius: 8px;
-    }
-    .failed-output {
-        background: #ffebee;
-        border-left: 5px solid #f44336;
-        border: 2px solid #f44336;
-        padding: 15px;
-        margin: 10px 0;
-        border-radius: 8px;
+    .task-failed {
+        background: #f8d7da;
+        border-left: 4px solid #dc3545;
     }
     .status-badge {
         display: inline-block;
@@ -120,169 +111,151 @@ class MultimodalSynthesisUI:
         color: #721c24;
         border: 2px solid #dc3545;
     }
-    .gallery-container {
+    .log-box {
+        font-family: 'Courier New', monospace;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 15px;
         border-radius: 8px;
-        border: 2px solid #e0e0e0;
-        padding: 10px;
-        background: #fafafa;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .log-info {
+        color: #4fc3f7;
+    }
+    .log-success {
+        color: #66bb6a;
+    }
+    .log-error {
+        color: #ef5350;
     }
     """
 
     def __init__(self):
         self.graph = None
-        self.current_task_id = None
+        self.task_manager = TaskManager()
         self.is_running = False
+        self.log_queue = Queue()
+        self.log_lock = threading.Lock()
     
     def create_interface(self):
         """创建 Gradio 界面"""
 
-        with gr.Blocks(title="多模态数据合成系统") as interface:
+        with gr.Blocks(title="金融财务数据合成系统") as interface:
             
             # 标题
             gr.HTML("""
             <div class="header">
-                <h1>🤖 多模态数据合成系统</h1>
-                <p>基于 Multi-Agent 的高质量多模态训练数据合成平台</p>
+                <h1>🤖 金融财务数据合成系统</h1>
+                <p>基于 Multi-Agent 的高质量金融财务分析训练数据合成平台</p>
             </div>
             """)
             
             with gr.Tabs():
-                # Tab 1: 数据合成
-                with gr.Tab("📊 数据合成"):
+                # Tab 1: 批量任务处理
+                with gr.Tab("📊 批量任务处理"):
                     with gr.Row():
                         # 左侧：配置区域
                         with gr.Column(scale=1):
-                            gr.Markdown("### 📁 文件上传")
+                            gr.Markdown("### 📁 数据上传")
+                            
                             file_input = gr.File(
-                                label="上传文件（支持图片和文档）",
-                                file_count="multiple",
-                                file_types=["image", ".txt", ".csv", ".json", ".md", ".xlsx", ".pdf"]
+                                label="上传 JSON 文件（金融数据）",
+                                file_types=[".json"],
+                                type="filepath"
                             )
 
-                            uploaded_files_display = gr.Gallery(
-                                label="已上传的文件",
-                                show_label=True,
-                                columns=2,
-                                height="auto",
-                                elem_classes=["gallery-container"]
-                            )
+                            load_status = gr.Markdown("")
                             
                             gr.Markdown("### ⚙️ 任务配置")
                             
                             with gr.Group():
-                                task_type = gr.Dropdown(
-                                    choices=[t.value for t in TaskType],
-                                    value=TaskType.IMAGE_QA.value,
-                                    label="任务类型",
-                                    info="选择要合成的数据类型"
-                                )
-                                
-                                custom_task_input = gr.Textbox(
-                                    label="自定义任务类型（仅当选择'自定义'时）",
-                                    placeholder="例如：图表数据分析类",
-                                    visible=False
-                                )
-                                
-                                task_description = gr.Textbox(
-                                    label="任务描述（可选）",
-                                    placeholder="为任务类型添加额外的描述信息...",
-                                    lines=3
-                                )
-                                
                                 max_iterations = gr.Slider(
                                     minimum=1,
                                     maximum=20,
                                     value=10,
                                     step=1,
                                     label="最大迭代次数",
-                                    info="生成的问答对数量"
+                                    info="每个任务生成的问答对数量"
                                 )
                                 
-                                initial_difficulty = gr.Slider(
-                                    minimum=0.1,
-                                    maximum=0.5,
-                                    value=0.3,
-                                    step=0.1,
-                                    label="初始难度",
-                                    info="第一个问题的难度（0-1）"
-                                )
-                                
-                                difficulty_increment = gr.Slider(
-                                    minimum=0.05,
-                                    maximum=0.2,
-                                    value=0.1,
-                                    step=0.05,
-                                    label="难度递增步长",
-                                    info="每次迭代增加的难度"
+                                parallel_count = gr.Slider(
+                                    minimum=1,
+                                    maximum=10,
+                                    value=3,
+                                    step=1,
+                                    label="并行任务数",
+                                    info="同时处理的任务数量"
                                 )
                             
-                            start_btn = gr.Button("🚀 开始合成", variant="primary", size="lg")
-                            stop_btn = gr.Button("⏹️ 停止", variant="stop", size="lg")
+                            with gr.Row():
+                                start_btn = gr.Button("🚀 开始批量处理", variant="primary", size="lg")
+                                stop_btn = gr.Button("⏹️ 停止", variant="stop", size="lg")
+                                refresh_btn = gr.Button("🔄 刷新任务列表", variant="secondary", size="lg")
 
                             stop_status = gr.Markdown("")
                         
-                        # 右侧：结果显示区域
+                        # 右侧：任务列表和日志
                         with gr.Column(scale=2):
-                            # 实时进度看板
+                            # 任务统计
                             with gr.Group():
-                                gr.Markdown("### 📊 实时进度看板")
+                                gr.Markdown("### 📊 任务统计")
                                 with gr.Row():
-                                    current_iteration = gr.Textbox(
-                                        label="当前迭代",
-                                        value="0/0",
-                                        interactive=False,
-                                        scale=1
-                                    )
-                                    current_difficulty = gr.Textbox(
-                                        label="当前难度",
-                                        value="--",
-                                        interactive=False,
-                                        scale=1
-                                    )
-                                    valid_count = gr.Textbox(
-                                        label="已生成问答对",
+                                    total_tasks = gr.Textbox(
+                                        label="总任务数",
                                         value="0",
                                         interactive=False,
                                         scale=1
                                     )
-                                
-                                progress_bar = gr.Slider(
-                                    minimum=0,
-                                    maximum=100,
-                                    value=0,
-                                    label="整体进度",
-                                    interactive=False
-                                )
-                                
-                                status_text = gr.Markdown(
-                                    "<div class='status-badge'>⏸️ 等待开始</div>",
-                                    elem_classes=["progress-dashboard"]
-                                )
+                                    pending_tasks = gr.Textbox(
+                                        label="待处理",
+                                        value="0",
+                                        interactive=False,
+                                        scale=1
+                                    )
+                                    processing_tasks = gr.Textbox(
+                                        label="处理中",
+                                        value="0",
+                                        interactive=False,
+                                        scale=1
+                                    )
+                                    completed_tasks = gr.Textbox(
+                                        label="已完成",
+                                        value="0",
+                                        interactive=False,
+                                        scale=1
+                                    )
+                                    failed_tasks = gr.Textbox(
+                                        label="失败",
+                                        value="0",
+                                        interactive=False,
+                                        scale=1
+                                    )
                             
-                            # 实时过程（可滚动）
-                            gr.Markdown("### 🔄 Agent 执行过程")
-                            iteration_display = gr.HTML(
-                                "<div class='scrollable-box'>等待开始...</div>"
+                            # 任务列表
+                            gr.Markdown("### 📋 任务列表")
+                            task_list_display = gr.HTML(
+                                "<div class='scrollable-box'>暂无任务</div>"
                             )
                             
-                            # 已验证的问答对（可滚动）
-                            gr.Markdown("### ✅ 已验证的问答对")
-                            validated_qa_display = gr.HTML(
-                                "<div class='scrollable-box'>暂无数据</div>"
+                            # 实时日志
+                            gr.Markdown("### 📝 实时日志")
+                            log_display = gr.HTML(
+                                "<div class='log-box'>等待开始...</div>"
                             )
                             
-                            # 导出结果
-                            gr.Markdown("### 💾 导出结果")
-                            with gr.Row():
-                                export_json_btn = gr.Button("📥 导出 JSON")
-                                export_path_display = gr.Textbox(
-                                    label="导出路径",
-                                    interactive=False
-                                )
-                                export_status = gr.Markdown("")
-                            export_download = gr.File(
-                                label="下载文件",
-                                visible=True
+                            # 进度条
+                            progress_bar = gr.Slider(
+                                minimum=0,
+                                maximum=100,
+                                value=0,
+                                label="整体进度",
+                                interactive=False
+                            )
+                            
+                            status_text = gr.Markdown(
+                                "<div class='status-badge'>⏸️ 等待开始</div>",
+                                elem_classes=["progress-dashboard"]
                             )
                 
                 # Tab 2: LLM 配置
@@ -374,363 +347,322 @@ class MultimodalSynthesisUI:
                     prompts_status = gr.Markdown("")
             
             # 事件处理
-            def update_custom_task_visibility(task_type_value):
-                """根据任务类型显示/隐藏自定义输入框"""
-                return gr.update(visible=(task_type_value == "自定义"))
-            
-            task_type.change(
-                fn=update_custom_task_visibility,
-                inputs=[task_type],
-                outputs=[custom_task_input]
-            )
-            
-            def handle_file_upload(files):
-                """处理文件上传（支持图片和文档）"""
-                if not files:
-                    return []
-
-                # 处理文件列表
-                file_info = []
-                image_files = []
-
-                for file in files:
-                    file_path = file.name if hasattr(file, 'name') else file
-                    file_type = get_file_type(file_path)
-
-                    if file_type == 'image':
-                        image_files.append(file_path)
-                        file_info.append(("图片", file_path))
-
-                    # 文档文件处理逻辑移到 start_synthesis 中
-
-                # 返回图片文件用于 Gallery 显示
-                return image_files if image_files else []
-
-            file_input.change(
-                fn=handle_file_upload,
-                inputs=[file_input],
-                outputs=[uploaded_files_display]
-            )
-            
-            def start_synthesis(
-                files,
-                task_type_value,
-                custom_task_value,
-                task_desc,
-                max_iter,
-                init_diff,
-                diff_inc
-            ):
-                """开始数据合成（支持图片和文档）"""
-                if not files:
-                    yield (
-                        "0/0", "--", "0", 0,
-                        "<div class='status-badge status-failed'>❌ 请先上传文件</div>",
-                        "<div class='scrollable-box'>请先上传文件</div>",
-                        "<div class='scrollable-box'>暂无数据</div>",
-                        ""
-                    )
-                    return
-
-                # 设置运行标志
-                self.is_running = True
-
-                # 确定任务类型
-                final_task_type = custom_task_value if task_type_value == "自定义" else task_type_value
-
-                # 处理上传的文件
-                image_infos = []
-                image_paths = []
-                file_contents = []
-                file_info_list = []
-
-                for file in files:
-                    file_path = file.name if hasattr(file, 'name') else file
-                    file_type = get_file_type(file_path)
-
-                    # 复制文件到上传目录
-                    filename = Path(file_path).name
-                    dest_path = settings.UPLOAD_DIR / filename
-                    import shutil
-                    shutil.copy(file_path, dest_path)
-
-                    if file_type == 'image':
-                        # 处理图片文件
-                        image_infos.append(ImageInfo(
-                            path=str(dest_path),
-                            filename=filename
-                        ))
-                        image_paths.append(str(dest_path))
-
-                    else:
-                        # 处理文档文件
-                        content = read_document_content(str(dest_path))
-                        file_contents.append(content)
-                        file_info_list.append({
-                            "filename": filename,
-                            "file_type": file_type,
-                            "path": str(dest_path),
-                            "content_preview": content[:200] + "..." if len(content) > 200 else content
-                        })
-
-                # 创建任务
-                task_id = generate_task_id()
-
-                # 构建任务描述
-                enhanced_desc = task_desc if task_desc else ""
-                if file_info_list:
-                    file_info_text = f"\n上传文件: {', '.join([f['filename'] for f in file_info_list])}"
-                    enhanced_desc += file_info_text
-
-                task = SynthesisTask(
-                    task_id=task_id,
-                    task_type=final_task_type,
-                    task_description=enhanced_desc if enhanced_desc else None,
-                    images=image_infos,
-                    max_iterations=int(max_iter),
-                    initial_difficulty=init_diff,
-                    difficulty_increment=diff_inc
-                )
-
-                # 初始化状态
-                initial_state = AgentState(
-                    task=task,
-                    image_paths=image_paths,
-                    file_contents=file_contents,
-                    current_difficulty=init_diff
-                )
-
-                # 创建图实例
-                graph = MultimodalSynthesisGraph(llm_config)
-
-                # 初始状态
-                file_summary = f"<p>🖼️ 图片数量：{len(image_paths)}</p>" if image_paths else ""
-                doc_summary = f"<p>📄 文档数量：{len(file_contents)}</p>" if file_contents else ""
-
-                yield (
-                    f"0/{int(max_iter)}", f"{init_diff:.2f}", "0", 0,
-                    f"<div class='status-badge status-running'>🚀 开始合成 - 任务ID: {task_id}</div>",
-                    f"<div class='scrollable-box'><p>📋 任务类型：{final_task_type}</p>{file_summary}{doc_summary}<p>🔢 最大迭代：{max_iter}</p></div>",
-                    "<div class='scrollable-box'>暂无数据</div>",
-                    ""
-                )
-
+            def load_json_file(file_path):
+                """加载 JSON 文件（追加模式）"""
+                if not file_path:
+                    return "❌ 请先上传文件", [], "0", "0", "0", "0", "0", "<div class='scrollable-box'>暂无任务</div>"
+                
                 try:
-                    # 运行合成过程
-                    state = initial_state
-                    all_iterations_html = ""
-
-                    for iteration in range(1, int(max_iter) + 1):
-                        # 检查是否停止
-                        if not self.is_running:
-                            yield (
-                                f"{iteration-1}/{int(max_iter)}",
-                                f"{state.current_difficulty:.2f}",
-                                str(len(state.history_qa_pairs)),
-                                int((iteration-1) / int(max_iter) * 100),
-                                "<div class='status-badge status-failed'>⏹️ 用户停止</div>",
-                                f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>",
-                                "⏹️ 已停止"
-                            )
-                            break
-
-                        # 手动执行每个步骤
-                        state.current_iteration = iteration
-                        state.current_difficulty = min(
-                            init_diff + (iteration - 1) * diff_inc,
-                            settings.MAX_DIFFICULTY
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    # Get existing task count
+                    existing_count = len(self.task_manager.get_all_tasks())
+                    
+                    # 创建任务（APPEND, don't clear）
+                    tasks = []
+                    for item in data:
+                        task = FinancialTaskInput(
+                            证券代码=item.get("证券代码", ""),
+                            公司名称=item.get("公司名称", ""),
+                            统计截止日期=item.get("统计截止日期", ""),
+                            评估维度=item.get("评估维度", ""),
+                            关键指标=item.get("关键指标", {})
                         )
-
-                        # 计算进度
-                        progress_percent = int((iteration / int(max_iter)) * 100)
-
-                        # 构建当前迭代的 HTML
-                        iteration_html = f"<div style='margin-bottom: 20px; border: 2px solid #ddd; padding: 10px; border-radius: 8px;'>"
-                        iteration_html += f"<h3>🔄 迭代 {iteration} - 难度: {state.current_difficulty:.2f}</h3>"
-
-                        # 提议者
-                        iteration_html += '<div class="proposer-output">'
-                        iteration_html += "<h4>💡 提议者</h4>"
-
-                        try:
-                            proposer_output = graph.proposer.propose(
-                                image_paths=image_paths if image_paths else None,
-                                file_contents=file_contents if file_contents else None,
-                                task_type=final_task_type,
-                                difficulty=state.current_difficulty,
-                                history_qa_pairs=state.history_qa_pairs
-                            )
-
-                            iteration_html += f"<p><strong>问题：</strong>{proposer_output.question}</p>"
-                            iteration_html += f"<p><strong>参考答案：</strong>{proposer_output.answer}</p>"
-                            iteration_html += "</div>"
-
-                            # 更新状态并 yield
-                            all_iterations_html = iteration_html + all_iterations_html
-                            yield (
-                                f"{iteration}/{int(max_iter)}",
-                                f"{state.current_difficulty:.2f}",
-                                str(len(state.history_qa_pairs)),
-                                progress_percent,
-                                "<div class='status-badge status-running'>⏳ 提议者工作中...</div>",
-                                f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>",
-                                ""
-                            )
-
-                            # 求解者
-                            iteration_html += '<div class="solver-output">'
-                            iteration_html += "<h4>🤔 求解者</h4>"
-
-                            solver_output = graph.solver.solve(
-                                image_paths=image_paths if image_paths else None,
-                                file_contents=file_contents if file_contents else None,
-                                question=proposer_output.question
-                            )
-
-                            iteration_html += f"<p><strong>预测答案：</strong>{solver_output.answer}</p>"
-                            iteration_html += "</div>"
-
-                            all_iterations_html = iteration_html.replace("</div>", "</div>", 1) + all_iterations_html.split("</div>", 1)[1] if "</div>" in all_iterations_html else iteration_html
-                            yield (
-                                f"{iteration}/{int(max_iter)}",
-                                f"{state.current_difficulty:.2f}",
-                                str(len(state.history_qa_pairs)),
-                                progress_percent,
-                                "<div class='status-badge status-running'>⏳ 求解者工作中...</div>",
-                                f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                f"<div class='scrollable-box'>已生成 {len(state.history_qa_pairs)} 对问答</div>",
-                                ""
-                            )
-
-                            # 验证者
-                            iteration_html += '<div class="validator-output">'
-                            iteration_html += "<h4>✅ 验证者</h4>"
-
-                            validation = graph.validator.validate(
-                                image_paths=image_paths if image_paths else None,
-                                file_contents=file_contents if file_contents else None,
-                                question=proposer_output.question,
-                                reference_answer=proposer_output.answer,
-                                predicted_answer=solver_output.answer
-                            )
-
-                            iteration_html += f"<p><strong>验证结果：</strong>{'✅ 通过' if validation.is_valid else '❌ 未通过'}</p>"
-                            iteration_html += f"<p><strong>相似度分数：</strong>{validation.similarity_score:.2f}</p>"
-                            iteration_html += f"<p><strong>理由：</strong>{validation.reason}</p>"
-                            iteration_html += "</div>"
-                            iteration_html += "</div>"
-
-                            # 更新历史
-                            validated_html = "<div class='scrollable-box'>"
-                            if validation.is_valid:
-                                from src.models import QAPair
-                                qa_pair = QAPair(
-                                    question=proposer_output.question,
-                                    answer=proposer_output.answer,
-                                    difficulty=state.current_difficulty,
-                                    iteration=iteration
-                                )
-                                state.history_qa_pairs.append(qa_pair)
-
-                                # 更新已验证的问答对显示
-                                validated_html += f"<h3>✅ 已生成 {len(state.history_qa_pairs)} 对问答</h3>"
-                                for i, qa in enumerate(state.history_qa_pairs, 1):
-                                    validated_html += f"<div style='background: #f0f8ff; padding: 10px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #1976d2;'>"
-                                    validated_html += f"<h4>问答对 {i}（难度：{qa.difficulty:.2f}）</h4>"
-                                    validated_html += f"<p><strong>Q：</strong>{qa.question}</p>"
-                                    validated_html += f"<p><strong>A：</strong>{qa.answer}</p>"
-                                    validated_html += "</div>"
-                            else:
-                                validated_html += f"<p>已生成 {len(state.history_qa_pairs)} 对问答</p>"
-                            validated_html += "</div>"
-
-                            all_iterations_html = iteration_html + all_iterations_html
-                            yield (
-                                f"{iteration}/{int(max_iter)}",
-                                f"{state.current_difficulty:.2f}",
-                                str(len(state.history_qa_pairs)),
-                                progress_percent,
-                                f"<div class='status-badge status-running'>🔄 迭代 {iteration}/{int(max_iter)} 完成</div>",
-                                f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                validated_html,
-                                ""
-                            )
-
-                        except Exception as e:
-                            iteration_html += f'<div class="failed-output">'
-                            iteration_html += f"<h4>❌ 错误</h4><p>{str(e)}</p>"
-                            iteration_html += "</div></div>"
-                            all_iterations_html = iteration_html + all_iterations_html
-                            yield (
-                                f"{iteration}/{int(max_iter)}",
-                                f"{state.current_difficulty:.2f}",
-                                str(len(state.history_qa_pairs)),
-                                progress_percent,
-                                "<div class='status-badge status-failed'>❌ 执行失败</div>",
-                                f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                                validated_html if 'validated_html' in locals() else "<div class='scrollable-box'>暂无数据</div>",
-                                ""
-                            )
-
-                    # 完成
-                    result = SynthesisResult(
-                        task_id=task_id,
-                        task_type=final_task_type,
-                        images=image_infos,
-                        qa_pairs=state.history_qa_pairs,
-                        total_iterations=int(max_iter),
-                        valid_qa_count=len(state.history_qa_pairs),
+                        self.task_manager.add_task(task)
+                        tasks.append(task)
+                    
+                    # Get ALL tasks (old + new)
+                    all_tasks = self.task_manager.get_all_tasks()
+                    
+                    # 更新显示
+                    task_list_html = "<div class='scrollable-box'>"
+                    for t in all_tasks:
+                        status_class = f"task-{t.status.value}"
+                        task_list_html += f"""
+                        <div class='task-item {status_class}'>
+                            <p><strong>{t.公司名称}</strong> ({t.证券代码})</p>
+                            <p>评估维度: {t.评估维度}</p>
+                            <p>状态: {t.status.value}</p>
+                        </div>
+                        """
+                    task_list_html += "</div>"
+                    
+                    new_count = len(tasks)
+                    total_count = len(all_tasks)
+                    
+                    return (
+                        f"✅ 成功追加 {new_count} 个任务（共计 {total_count} 个）",
+                        all_tasks,
+                        str(total_count),
+                        str(total_count),
+                        "0",
+                        "0",
+                        "0",
+                        task_list_html
+                    )
+                except Exception as e:
+                    return f"❌ 加载失败: {str(e)}", [], "0", "0", "0", "0", "0", "<div class='scrollable-box'>暂无任务</div>"
+            
+            def refresh_task_list():
+                """刷新任务列表"""
+                tasks = self.task_manager.get_all_tasks()
+                
+                # 统计各状态任务数
+                total = len(tasks)
+                pending = len([t for t in tasks if t.status == TaskStatus.PENDING])
+                processing = len([t for t in tasks if t.status == TaskStatus.PROCESSING])
+                completed = len([t for t in tasks if t.status == TaskStatus.COMPLETED])
+                failed = len([t for t in tasks if t.status == TaskStatus.FAILED])
+                
+                # 生成任务列表 HTML
+                task_list_html = "<div class='scrollable-box'>"
+                if tasks:
+                    for task in tasks:
+                        status_class = f"task-{task.status.value}"
+                        task_list_html += f"""
+                        <div class='task-item {status_class}'>
+                            <p><strong>{task.公司名称}</strong> ({task.证券代码})</p>
+                            <p>评估维度: {task.评估维度}</p>
+                            <p>状态: {task.status.value}</p>
+                        </div>
+                        """
+                else:
+                    task_list_html += "<p>暂无任务</p>"
+                task_list_html += "</div>"
+                
+                return (
+                    str(total),
+                    str(pending),
+                    str(processing),
+                    str(completed),
+                    str(failed),
+                    task_list_html,
+                    "✅ 任务列表已刷新"
+                )
+            
+            file_input.change(
+                fn=load_json_file,
+                inputs=[file_input],
+                outputs=[load_status, gr.State(), total_tasks, pending_tasks, processing_tasks, 
+                        completed_tasks, failed_tasks, task_list_display]
+            )
+            
+            refresh_btn.click(
+                fn=refresh_task_list,
+                outputs=[total_tasks, pending_tasks, processing_tasks, completed_tasks, failed_tasks, task_list_display, load_status]
+            )
+            
+            def process_single_task(self_ref, task: FinancialTaskInput, max_iter: int) -> FinancialTaskResult:
+                """处理单个任务（线程安全）"""
+                try:
+                    # 创建图实例
+                    graph = MultimodalSynthesisGraph(llm_config)
+                    
+                    # 记录日志
+                    log_msg = f"[INFO] 开始处理任务: {task.公司名称} ({task.证券代码})\n"
+                    with self_ref.log_lock:
+                        self_ref.log_queue.put(log_msg)
+                    
+                    # 调用 graph.run() 并传入 max_iterations 参数（Bug 1 修复）
+                    result = graph.run(task, max_iterations=max_iter)
+                    
+                    # 保存结果
+                    output_file = settings.OUTPUT_DIR / f"{task.task_id}.json"
+                    save_json(result.dict(), output_file)
+                    
+                    log_msg = f"[SUCCESS] 完成任务: {task.公司名称} - 生成 {result.valid_qa_count} 个问答对\n"
+                    with self_ref.log_lock:
+                        self_ref.log_queue.put(log_msg)
+                    
+                    return result
+                    
+                except Exception as e:
+                    log_msg = f"[ERROR] 任务失败: {task.公司名称} - {str(e)}\n"
+                    with self_ref.log_lock:
+                        self_ref.log_queue.put(log_msg)
+                    
+                    return FinancialTaskResult(
+                        task_id=task.task_id,
+                        证券代码=task.证券代码,
+                        公司名称=task.公司名称,
+                        评估维度=task.评估维度,
+                        status=TaskStatus.FAILED,
                         completed_at=datetime.now()
                     )
-
-                    output_file = settings.OUTPUT_DIR / f"{task_id}.json"
-                    save_json(result.dict(), output_file)
-
-                    self.is_running = False
+            
+            def start_batch_processing(max_iter, parallel_num):
+                """开始批量处理"""
+                if not self.task_manager.get_task_list_for_display():
                     yield (
-                        f"{int(max_iter)}/{int(max_iter)}",
-                        f"{state.current_difficulty:.2f}",
-                        str(len(state.history_qa_pairs)),
+                        "0", "0", "0", "0", "0",
+                        "<div class='scrollable-box'>暂无任务</div>",
+                        "<div class='log-box'>❌ 请先上传任务文件</div>",
+                        0,
+                        "<div class='status-badge status-failed'>❌ 请先上传任务文件</div>"
+                    )
+                    return
+                
+                self.is_running = True
+                
+                # 获取待处理任务
+                pending_tasks = self.task_manager.filter_tasks(status=TaskStatus.PENDING)
+                total_count = len(pending_tasks)
+                
+                if total_count == 0:
+                    yield (
+                        str(len(self.task_manager.get_all_tasks())),
+                        "0",
+                        "0",
+                        str(len([t for t in self.task_manager.get_all_tasks().values() if t.status == TaskStatus.COMPLETED])),
+                        str(len([t for t in self.task_manager.get_all_tasks().values() if t.status == TaskStatus.FAILED])),
+                        "<div class='scrollable-box'>没有待处理的任务</div>",
+                        "<div class='log-box'>⚠️ 没有待处理的任务</div>",
                         100,
-                        f"<div class='status-badge status-completed'>✅ 合成完成！有效问答对: {len(state.history_qa_pairs)}</div>",
-                        f"<div class='scrollable-box'>{all_iterations_html}</div>",
-                        validated_html,
-                        "✅ 完成"
+                        "<div class='status-badge status-completed'>✅ 所有任务已完成</div>"
                     )
-
-                except Exception as e:
-                    self.is_running = False
-                    yield (
-                        "错误", "--", "0", 0,
-                        f"<div class='status-badge status-failed'>❌ 合成失败: {str(e)}</div>",
-                        f"<div class='scrollable-box'><p style='color: red;'>错误: {str(e)}</p></div>",
-                        "<div class='scrollable-box'>暂无数据</div>",
-                        f"❌ 失败: {str(e)}"
-                    )
+                    return
+                
+                # 初始状态
+                log_html = "<div class='log-box'>"
+                log_html += f"[INFO] 开始批量处理 {total_count} 个任务\n"
+                log_html += f"[INFO] 并行数: {int(parallel_num)}\n"
+                log_html += f"[INFO] 最大迭代次数: {int(max_iter)}\n"
+                log_html += "</div>"
+                
+                yield (
+                    str(len(self.task_manager.get_all_tasks())),
+                    str(total_count),
+                    "0",
+                    "0",
+                    "0",
+                    "<div class='scrollable-box'>处理中...</div>",
+                    log_html,
+                    0,
+                    "<div class='status-badge status-running'>🚀 开始批量处理</div>"
+                )
+                
+                # 使用 ThreadPoolExecutor 进行真正的并行处理（Bug 3 修复）
+                completed_count = 0
+                failed_count = 0
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=int(parallel_num)) as executor:
+                    # 提交所有任务
+                    future_to_task = {}
+                    for task in pending_tasks:
+                        if not self.is_running:
+                            break
+                        
+                        # 更新任务状态
+                        self.task_manager.update_task_status(task.task_id, TaskStatus.PROCESSING)
+                        future = executor.submit(process_single_task, self, task, int(max_iter))
+                        future_to_task[future] = task
+                    
+                    # 处理完成的任务
+                    for future in concurrent.futures.as_completed(future_to_task):
+                        if not self.is_running:
+                            break
+                        
+                        task = future_to_task[future]
+                        try:
+                            result = future.result()
+                            
+                            # 更新任务状态
+                            if result.status == TaskStatus.COMPLETED:
+                                self.task_manager.update_task_status(task.task_id, TaskStatus.COMPLETED)
+                                completed_count += 1
+                            else:
+                                self.task_manager.update_task_status(task.task_id, TaskStatus.FAILED)
+                                failed_count += 1
+                            
+                            # 更新任务列表显示
+                            task_list_html = "<div class='scrollable-box'>"
+                            for t in self.task_manager.get_all_tasks():
+                                status_class = f"task-{t.status.value}"
+                                task_list_html += f"""
+                                <div class='task-item {status_class}'>
+                                    <p><strong>{t.公司名称}</strong> ({t.证券代码})</p>
+                                    <p>评估维度: {t.评估维度}</p>
+                                    <p>状态: {t.status.value}</p>
+                                </div>
+                                """
+                            task_list_html += "</div>"
+                            
+                            # 更新日志显示（Bug 2 修复 - 实时更新）
+                            log_html = "<div class='log-box'>"
+                            with self.log_lock:
+                                while not self.log_queue.empty():
+                                    log_line = self.log_queue.get()
+                                    if "[ERROR]" in log_line:
+                                        log_html += f"<span class='log-error'>{log_line}</span>"
+                                    elif "[SUCCESS]" in log_line:
+                                        log_html += f"<span class='log-success'>{log_line}</span>"
+                                    else:
+                                        log_html += f"<span class='log-info'>{log_line}</span>"
+                            log_html += "</div>"
+                            
+                            # 计算进度
+                            progress = int((completed_count + failed_count) / total_count * 100)
+                            
+                            # Yield 更新
+                            yield (
+                                str(len(self.task_manager.get_all_tasks())),
+                                str(total_count - completed_count - failed_count),
+                                str(len([f for f in future_to_task if f.running()])),
+                                str(completed_count),
+                                str(failed_count),
+                                task_list_html,
+                                log_html,
+                                progress,
+                                f"<div class='status-badge status-running'>🔄 处理中: {completed_count + failed_count}/{total_count}</div>"
+                            )
+                            
+                        except Exception as e:
+                            failed_count += 1
+                            log_msg = f"[ERROR] 任务异常: {task.公司名称} - {str(e)}\n"
+                            with self.log_lock:
+                                self.log_queue.put(log_msg)
+                
+                # 完成
+                self.is_running = False
+                final_status = "completed" if failed_count == 0 else "partial"
+                
+                yield (
+                    str(len(self.task_manager.get_all_tasks())),
+                    "0",
+                    "0",
+                    str(completed_count),
+                    str(failed_count),
+                    task_list_html,
+                    log_html,
+                    100,
+                    f"<div class='status-badge status-completed'>✅ 批量处理完成！成功: {completed_count}, 失败: {failed_count}</div>"
+                )
             
             start_btn.click(
-                fn=start_synthesis,
-                inputs=[
-                    file_input,
-                    task_type,
-                    custom_task_input,
-                    task_description,
-                    max_iterations,
-                    initial_difficulty,
-                    difficulty_increment
-                ],
+                fn=start_batch_processing,
+                inputs=[max_iterations, parallel_count],
                 outputs=[
-                    current_iteration,
-                    current_difficulty,
-                    valid_count,
+                    total_tasks,
+                    pending_tasks,
+                    processing_tasks,
+                    completed_tasks,
+                    failed_tasks,
+                    task_list_display,
+                    log_display,
                     progress_bar,
-                    status_text,
-                    iteration_display,
-                    validated_qa_display,
-                    stop_status
+                    status_text
                 ]
+            )
+            
+            def stop_processing():
+                """停止处理"""
+                self.is_running = False
+                return "⏹️ 已停止处理"
+            
+            stop_btn.click(
+                fn=stop_processing,
+                outputs=[stop_status]
             )
             
             def save_llm_config_func(api_key, base_url, model_name, temp, max_tok):
@@ -755,17 +687,6 @@ class MultimodalSynthesisUI:
                     max_tokens_input
                 ],
                 outputs=[llm_config_status]
-            )
-
-            def stop_synthesis():
-                """停止数据合成"""
-                self.is_running = False
-                return "⏹️ 正在停止..."
-
-            stop_btn.click(
-                fn=stop_synthesis,
-                inputs=[],
-                outputs=[stop_status]
             )
             
             def save_prompts_func(p_sys, p_user, s_sys, s_user, v_sys, v_user):
@@ -793,27 +714,13 @@ class MultimodalSynthesisUI:
                 ],
                 outputs=[prompts_status]
             )
-
-            def export_json():
-                """导出最近的合成结果为 JSON"""
-                try:
-                    # 获取输出目录中最新的文件
-                    output_files = list(settings.OUTPUT_DIR.glob("*.json"))
-                    if not output_files:
-                        return "", "❌ 没有可导出的结果", None
-
-                    # 按修改时间排序，获取最新的文件
-                    latest_file = max(output_files, key=lambda f: f.stat().st_mtime)
-                    return str(latest_file), f"✅ 已导出到: {latest_file}", str(latest_file)
-                except Exception as e:
-                    return "", f"❌ 导出失败：{str(e)}", None
-
-            export_json_btn.click(
-                fn=export_json,
-                inputs=[],
-                outputs=[export_path_display, export_status, export_download]
+            
+            # Auto-load historical tasks on interface load
+            interface.load(
+                fn=lambda: refresh_task_list(),
+                outputs=[total_tasks, pending_tasks, processing_tasks, completed_tasks, failed_tasks, task_list_display, load_status]
             )
-
+        
         return interface
 
 

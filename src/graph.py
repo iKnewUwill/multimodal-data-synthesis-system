@@ -8,7 +8,9 @@ from datetime import datetime
 from config.settings import settings
 from src.models import (
     AgentState, IterationState, QAPair,
-    ProposerOutput, ValidationResult
+    ProposerOutput, ValidationResult,
+    FinancialTaskInput, FinancialTaskResult, FinancialQAResult, TaskStatus,
+    SynthesisTask, TaskType
 )
 from src.agents import (
     MultimodalLLMClient, ProposerAgent,
@@ -102,23 +104,23 @@ class MultimodalSynthesisGraph:
         try:
             logger.info(f"[迭代 {state.current_iteration}] 提议者开始工作")
             state.current_state.status = "proposing"
-            
-            # 调用提议者
+
+            # 调用提议者 - 使用 financial_data 替代 image_paths
             output = self.proposer.propose(
-                image_paths=state.image_paths,
+                financial_data=state.task.financial_data,
                 task_type=state.task.task_type,
                 difficulty=state.current_difficulty,
                 history_qa_pairs=state.history_qa_pairs
             )
-            
+
             state.current_state.proposed_qa = output
             logger.info(f"[迭代 {state.current_iteration}] 提议者完成")
-            
+
         except Exception as e:
             logger.error(f"[迭代 {state.current_iteration}] 提议者失败: {str(e)}")
             state.current_state.status = "failed"
             state.current_state.error = str(e)
-        
+
         return state
     
     def _solve_node(self, state: AgentState) -> AgentState:
@@ -126,21 +128,21 @@ class MultimodalSynthesisGraph:
         try:
             logger.info(f"[迭代 {state.current_iteration}] 求解者开始工作")
             state.current_state.status = "solving"
-            
-            # 调用求解者
+
+            # 调用求解者 - 使用 financial_data 替代 image_paths
             output = self.solver.solve(
-                image_paths=state.image_paths,
+                financial_data=state.task.financial_data,
                 question=state.current_state.proposed_qa.question
             )
-            
+
             state.current_state.solved_answer = output.answer
             logger.info(f"[迭代 {state.current_iteration}] 求解者完成")
-            
+
         except Exception as e:
             logger.error(f"[迭代 {state.current_iteration}] 求解者失败: {str(e)}")
             state.current_state.status = "failed"
             state.current_state.error = str(e)
-        
+
         return state
     
     def _validate_node(self, state: AgentState) -> AgentState:
@@ -148,23 +150,23 @@ class MultimodalSynthesisGraph:
         try:
             logger.info(f"[迭代 {state.current_iteration}] 验证者开始工作")
             state.current_state.status = "validating"
-            
-            # 调用验证者
+
+            # 调用验证者 - 使用 financial_data 替代 image_paths
             validation = self.validator.validate(
-                image_paths=state.image_paths,
+                financial_data=state.task.financial_data,
                 question=state.current_state.proposed_qa.question,
                 reference_answer=state.current_state.proposed_qa.answer,
                 predicted_answer=state.current_state.solved_answer
             )
-            
+
             state.current_state.validation = validation
             logger.info(f"[迭代 {state.current_iteration}] 验证者完成")
-            
+
         except Exception as e:
             logger.error(f"[迭代 {state.current_iteration}] 验证者失败: {str(e)}")
             state.current_state.status = "failed"
             state.current_state.error = str(e)
-        
+
         return state
     
     def _update_state_node(self, state: AgentState) -> AgentState:
@@ -173,16 +175,22 @@ class MultimodalSynthesisGraph:
             # 如果验证通过，添加到历史
             if (state.current_state.validation and 
                 state.current_state.validation.is_valid):
-                
-                qa_pair = QAPair(
+
+                # 创建 FinancialQAResult 而不是 QAPair
+                qa_result = FinancialQAResult(
                     question=state.current_state.proposed_qa.question,
-                    answer=state.current_state.proposed_qa.answer,
+                    analysis_process={
+                        "reference_answer": state.current_state.proposed_qa.answer,
+                        "predicted_answer": state.current_state.solved_answer or "",
+                        "validation_reason": state.current_state.validation.reason
+                    },
+                    conclusion=state.current_state.proposed_qa.answer,
                     difficulty=state.current_difficulty,
                     iteration=state.current_iteration
                 )
-                state.history_qa_pairs.append(qa_pair)
+                state.history_qa_pairs.append(qa_result)
                 state.current_state.status = "completed"
-                
+
                 logger.info(
                     f"[迭代 {state.current_iteration}] 问答对已添加到历史 "
                     f"(共 {len(state.history_qa_pairs)} 对)"
@@ -190,43 +198,103 @@ class MultimodalSynthesisGraph:
             else:
                 state.current_state.status = "failed"
                 logger.info(f"[迭代 {state.current_iteration}] 验证未通过，问答对未添加")
-            
+
             # 添加到所有迭代记录
             state.all_iterations.append(state.current_state)
-            
+
             # 检查是否应该结束
             if state.current_iteration >= state.task.max_iterations:
                 state.is_finished = True
                 logger.info("达到最大迭代次数，标记为完成")
-            
+
         except Exception as e:
             logger.error(f"[迭代 {state.current_iteration}] 更新状态失败: {str(e)}")
             state.error = str(e)
             state.is_finished = True
-        
+
         return state
     
-    def run(self, initial_state: AgentState) -> AgentState:
-        """运行工作流"""
-        logger.info("=" * 50)
-        logger.info("开始多模态数据合成工作流")
-        logger.info(f"任务类型: {initial_state.task.task_type}")
-        logger.info(f"图片数量: {len(initial_state.image_paths)}")
-        logger.info(f"最大迭代次数: {initial_state.task.max_iterations}")
-        logger.info("=" * 50)
+    def run(self, task_input: FinancialTaskInput, max_iterations: int = None) -> FinancialTaskResult:
+        """运行工作流
         
+        Args:
+            task_input: 金融任务输入
+            max_iterations: 最大迭代次数，如果为None则使用settings默认值
+        """
+        # 使用传入的迭代次数或默认值
+        actual_max_iterations = max_iterations or settings.MAX_ITERATIONS
+        
+        logger.info("=" * 50)
+        logger.info("开始金融财务数据合成工作流")
+        logger.info(f"任务ID: {task_input.task_id}")
+        logger.info(f"公司名称: {task_input.公司名称}")
+        logger.info(f"证券代码: {task_input.证券代码}")
+        logger.info(f"评估维度: {task_input.评估维度}")
+        logger.info(f"最大迭代次数: {actual_max_iterations}")
+        logger.info("=" * 50)
+
         try:
+            # 更新任务状态为处理中
+            task_input.status = TaskStatus.PROCESSING
+            task_input.started_at = datetime.now()
+
+            # 从 FinancialTaskInput 创建 AgentState
+            initial_state = AgentState(
+                task=SynthesisTask(
+                    task_id=task_input.task_id,
+                    task_type=TaskType.FINANCIAL_QA.value,
+                    证券代码=task_input.证券代码,
+                    公司名称=task_input.公司名称,
+                    评估维度=task_input.评估维度,
+                    financial_data=task_input.关键指标,
+                    max_iterations=actual_max_iterations,
+                    initial_difficulty=settings.INITIAL_DIFFICULTY,
+                    difficulty_increment=settings.DIFFICULTY_INCREMENT
+                )
+            )
+
             # 运行图
             final_state = self.graph.invoke(initial_state)
-            
+
+            # 处理 final_state 可能是字典或 AgentState 对象的情况
+            if isinstance(final_state, dict):
+                history_qa = final_state.get('history_qa_pairs', [])
+                all_iterations = final_state.get('all_iterations', [])
+            else:
+                history_qa = final_state.history_qa_pairs
+                all_iterations = final_state.all_iterations
+
+            # 转换为 FinancialTaskResult
+            result = FinancialTaskResult(
+                task_id=task_input.task_id,
+                证券代码=task_input.证券代码,
+                公司名称=task_input.公司名称,
+                评估维度=task_input.评估维度,
+                status=TaskStatus.COMPLETED,
+                qa_pairs=history_qa,
+                total_iterations=len(all_iterations),
+                valid_qa_count=len(history_qa),
+                completed_at=datetime.now()
+            )
+
             logger.info("=" * 50)
             logger.info("工作流完成")
-            logger.info(f"总迭代次数: {len(final_state.all_iterations)}")
-            logger.info(f"有效问答对数量: {len(final_state.history_qa_pairs)}")
+            logger.info(f"总迭代次数: {result.total_iterations}")
+            logger.info(f"有效问答对数量: {result.valid_qa_count}")
             logger.info("=" * 50)
-            
-            return final_state
-        
+
+            return result
+
         except Exception as e:
             logger.error(f"工作流执行失败: {str(e)}")
-            raise
+            # 返回失败结果
+            return FinancialTaskResult(
+                task_id=task_input.task_id,
+                证券代码=task_input.证券代码,
+                公司名称=task_input.公司名称,
+                评估维度=task_input.评估维度,
+                status=TaskStatus.FAILED,
+                total_iterations=0,
+                valid_qa_count=0,
+                completed_at=datetime.now()
+            )
