@@ -1,6 +1,7 @@
 """Prompt 配置 - 金融报告推理分析"""
 
 from typing import Dict, Optional
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 
@@ -242,6 +243,22 @@ class PromptsConfig(BaseModel):
         description="任务类型描述"
     )
     
+    def save_to_file(self, filepath: Path = None):
+        """Save config to JSON"""
+        from pathlib import Path
+        filepath = filepath or Path("config/saved/prompts_config.json")
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(self.model_dump_json(indent=2, exclude_none=True), encoding='utf-8')
+    
+    @classmethod
+    def load_from_file(cls, filepath: Path = None) -> "PromptsConfig":
+        """Load config from JSON"""
+        from pathlib import Path
+        filepath = filepath or Path("config/saved/prompts_config.json")
+        if filepath.exists():
+            return cls.parse_file(filepath)
+        return cls()
+    
     def get_task_description(self, task_type: str) -> str:
         """获取任务类型描述"""
         return self.task_descriptions.get(
@@ -308,5 +325,9 @@ class PromptsConfig(BaseModel):
         return system_prompt, user_prompt
 
 
-# 全局 Prompts 配置实例
-prompts_config = PromptsConfig()
+def get_prompts_config() -> PromptsConfig:
+    """Get Prompts config instance"""
+    return PromptsConfig.load_from_file()
+
+
+prompts_config = get_prompts_config()  # Backward compatibility

@@ -135,7 +135,7 @@ class MultimodalSynthesisGraph:
                 question=state.current_state.proposed_qa.question
             )
 
-            state.current_state.solved_answer = output.answer
+            state.current_state.solved_qa = output
             logger.info(f"[迭代 {state.current_iteration}] 求解者完成")
 
         except Exception as e:
@@ -156,7 +156,7 @@ class MultimodalSynthesisGraph:
                 financial_data=state.task.financial_data,
                 question=state.current_state.proposed_qa.question,
                 reference_answer=state.current_state.proposed_qa.answer,
-                predicted_answer=state.current_state.solved_answer
+                predicted_answer=state.current_state.solved_qa.answer
             )
 
             state.current_state.validation = validation
@@ -181,7 +181,9 @@ class MultimodalSynthesisGraph:
                     question=state.current_state.proposed_qa.question,
                     analysis_process={
                         "reference_answer": state.current_state.proposed_qa.answer,
-                        "predicted_answer": state.current_state.solved_answer or "",
+                        "reference_analysis_process": state.current_state.proposed_qa.analysis_process,
+                        "predicted_answer": state.current_state.solved_qa.answer or "",
+                        "predicted_analysis_process": state.current_state.solved_qa.analysis_process or "",
                         "validation_reason": state.current_state.validation.reason
                     },
                     conclusion=state.current_state.proposed_qa.answer,

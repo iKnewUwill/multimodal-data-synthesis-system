@@ -2,6 +2,7 @@
 
 import os
 from typing import Optional
+from pathlib import Path
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -54,10 +55,28 @@ class LLMConfig(BaseModel):
         description="最大重试次数"
     )
     
+    def save_to_file(self, filepath: Path = None):
+        """Save config to JSON"""
+        filepath = filepath or Path("config/saved/llm_config.json")
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(self.model_dump_json(indent=2, exclude_none=True), encoding='utf-8')
+    
+    @classmethod
+    def load_from_file(cls, filepath: Path = None) -> "LLMConfig":
+        """Load config from JSON"""
+        filepath = filepath or Path("config/saved/llm_config.json")
+        if filepath.exists():
+            return cls.parse_file(filepath)
+        return cls()
+    
     class Config:
         # 允许从环境变量读取
         env_prefix = "LLM_"
 
 
-# 全局 LLM 配置实例
-llm_config = LLMConfig()
+def get_llm_config() -> LLMConfig:
+    """Get LLM config instance"""
+    return LLMConfig.load_from_file()
+
+
+llm_config = get_llm_config()  # Backward compatibility
