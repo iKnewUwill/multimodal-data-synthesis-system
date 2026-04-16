@@ -113,13 +113,10 @@ class ProposerAgent:
             # 映射中文字段到英文结构（保持向后兼容）
             output = ProposerOutput(
                 question=result.get("问题", result.get("question", "")),
-                answer=result.get("分析结论", result.get("answer", ""))
+                answer=result.get("分析结论", result.get("answer", "")),
+                analysis_process = result["分析过程"],
+                conclusion = result["分析结论"]
             )
-            # 存储完整的分析结果到extra字段
-            if "分析过程" in result:
-                output.analysis_process = result["分析过程"]
-            if "分析结论" in result:
-                output.conclusion = result["分析结论"]
 
             logger.info(f"提议者生成问题: {output.question[:50]}...")
             return output
@@ -165,13 +162,10 @@ class SolverAgent:
 
             # 映射字段
             output = SolverOutput(
-                answer=result.get("分析结论", result.get("answer", ""))
+                answer=result.get("分析结论", result.get("answer", "")),
+                analysis_process = result["分析过程"],
+                conclusion = result["分析结论"]
             )
-            # 存储完整的分析结果
-            if "分析过程" in result:
-                output.analysis_process = result["分析过程"]
-            if "分析结论" in result:
-                output.conclusion = result["分析结论"]
 
             logger.info(f"求解者生成答案: {output.answer[:50]}...")
             return output

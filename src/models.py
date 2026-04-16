@@ -92,12 +92,11 @@ class QAPair(BaseModel):
 class FinancialQAResult(BaseModel):
     """金融财务问答结果"""
     question: str = Field(..., description="问题")
-    analysis_process: Dict[str, str] = Field(..., description="分析过程（分步骤）")
+    analysis_process: Dict[str, Any] = Field(..., description="分析过程")
     conclusion: str = Field(..., description="分析结论")
     difficulty: float = Field(..., ge=0.0, le=1.0)
     iteration: int
     created_at: datetime = Field(default_factory=datetime.now)
-
 
 class FinancialTaskResult(BaseModel):
     """金融财务任务结果"""
@@ -134,14 +133,12 @@ class SolverOutput(BaseModel):
     analysis_process: Dict[str, str] = Field(default_factory=dict, description="分析过程（分步骤）")
     conclusion: str = Field(default="", description="分析结论")
 
-
 class IterationState(BaseModel):
     """迭代状态"""
     iteration: int = Field(..., description="当前迭代轮次")
     difficulty: float = Field(..., description="当前难度等级")
     proposed_qa: Optional[ProposerOutput] = Field(None, description="提议的问答对")
     solved_output: Optional[SolverOutput] = Field(None, description="求解的输出")
-    solved_answer: Optional[str] = Field(None, description="求解的答案（兼容字段）")
     validation: Optional[ValidationResult] = Field(None, description="验证结果")
     status: str = Field(default="pending", description="状态：pending/proposing/solving/validating/completed/failed")
     error: Optional[str] = Field(None, description="错误信息")

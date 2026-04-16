@@ -39,25 +39,26 @@ class UIHandlers:
     
     def load_json_file(self, file_path: str):
         """Handler for file upload (web_ui.py lines 532-587)
-        
+
         Loads JSON file and appends tasks to the task manager.
-        
+
         Args:
             file_path: Path to the JSON file to load
-            
+
         Returns:
             Tuple of status message, tasks list, and task counts
         """
         if not file_path:
+            empty_dataframe = TaskDataConverter.tasks_to_dataframe([])
             return (
                 "❌ 请先上传文件", [], "0", "0", "0", "0", "0",
-                "<div class='scrollable-box'>暂无任务</div>"
+                empty_dataframe
             )
-        
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
+
             # Create tasks (append mode)
             tasks = []
             for item in data:
@@ -70,14 +71,14 @@ class UIHandlers:
                 )
                 self.task_manager.add_task(task)
                 tasks.append(task)
-            
+
             # Get all tasks
             all_tasks = self.task_manager.get_all_tasks()
             task_dataframe = TaskDataConverter.tasks_to_dataframe(all_tasks)
-            
+
             new_count = len(tasks)
             total_count = len(all_tasks)
-            
+
             return (
                 f"✅ 成功追加 {new_count} 个任务（共计 {total_count} 个）",
                 all_tasks,
@@ -89,9 +90,10 @@ class UIHandlers:
                 task_dataframe
             )
         except Exception as e:
+            empty_dataframe = TaskDataConverter.tasks_to_dataframe([])
             return (
                 f"❌ 加载失败: {str(e)}", [], "0", "0", "0", "0", "0",
-                "<div class='scrollable-box'>暂无任务</div>"
+                empty_dataframe
             )
     
     def refresh_task_list(self):
@@ -136,38 +138,40 @@ class UIHandlers:
         """
         return HTMLGenerator.task_detail_html(task_id, self.task_manager)
     
-    def handle_dataframe_selection(self, selection_data: gr.SelectData, dataframe_value: pd.DataFrame):
+    def handle_dataframe_selection(self, dataframe_value: pd.DataFrame, selection_data: gr.SelectData):
         """Handler for DataFrame row selection
-        
+
         Args:
+            dataframe_value: Current DataFrame value (passed first due to how Gradio handles inputs)
             selection_data: Gradio selection event data
-            dataframe_value: Current DataFrame value
-            
+
         Returns:
             HTML string with task details
         """
-        # Handle no selection
-        if selection_data is None or dataframe_value is None or len(dataframe_value) == 0:
+        # Handle no selection or empty dataframe
+        if dataframe_value is None or len(dataframe_value) == 0:
             return "<div class='scrollable-box'>请选择一个任务查看详情</div>"
-        
+
         # Handle custom message row (empty state)
         if "暂无任务" in str(dataframe_value.iloc[0]["状态"]):
             return "<div class='scrollable-box'>暂无任务，请先上传文件</div>"
-        
+
         try:
-            # Get task_id from selected row
-            row_index = selection_data.index[0] if isinstance(selection_data.index, list) else selection_data.index
+            # Get task_id from selected row using selection data
+            row_index = selection_data.index[0] if hasattr(selection_data, 'index') and isinstance(selection_data.index, list) else selection_data.index
             task_id = dataframe_value.iloc[row_index]["任务ID"]
-            
+
             # Validate task_id
-            if not task_id or task_id.strip() == "":
+            if not task_id or str(task_id).strip() == "":
                 return "<div class='scrollable-box'>❌ 无效的任务ID</div>"
-            
+
             # Delegate to existing detail generation
-            return HTMLGenerator.task_detail_html(task_id, self.task_manager)
-            
+            return HTMLGenerator.task_detail_html(str(task_id), self.task_manager)
+
         except (IndexError, KeyError) as e:
             return f"<div class='scrollable-box'>❌ 获取任务详情失败: {str(e)}</div>"
+        except Exception as e:
+            return f"<div class='scrollable-box'>❌ 处理选择时发生错误: {str(e)}</div>"
     
     def _process_single_task(self, task: FinancialTaskInput, max_iter: int) -> FinancialTaskResult:
         """Process a single task (thread-safe).
@@ -229,9 +233,10 @@ class UIHandlers:
             Tuple of task counts, displays, progress, and status
         """
         if not self.task_manager.get_task_list_for_display():
+            empty_dataframe = TaskDataConverter.tasks_to_dataframe([])
             yield (
                 "0", "0", "0", "0", "0",
-                "<div class='scrollable-box'>暂无任务</div>",
+                empty_dataframe,
                 "<div class='log-box'>❌ 请先上传任务文件</div>",
                 0,
                 "<div class='status-badge status-failed'>❌ 请先上传任务文件</div>"
@@ -249,13 +254,14 @@ class UIHandlers:
             completed_count = len([t for t in all_tasks if t.status == TaskStatus.COMPLETED])
             failed_count = len([t for t in all_tasks if t.status == TaskStatus.FAILED])
             
+            task_dataframe = TaskDataConverter.tasks_to_dataframe(all_tasks)
             yield (
                 str(len(all_tasks)),
                 "0",
                 "0",
                 str(completed_count),
                 str(failed_count),
-                "<div class='scrollable-box'>没有待处理的任务</div>",
+                task_dataframe,
                 "<div class='log-box'>⚠️ 没有待处理的任务</div>",
                 100,
                 "<div class='status-badge status-completed'>✅ 所有任务已完成</div>"
@@ -269,13 +275,14 @@ class UIHandlers:
         log_html += f"[INFO] 最大迭代次数: {int(max_iter)}\n"
         log_html += "</div>"
         
+        initial_dataframe = TaskDataConverter.tasks_to_dataframe(self.task_manager.get_all_tasks())
         yield (
             str(len(self.task_manager.get_all_tasks())),
             str(total_count),
             "0",
             "0",
             "0",
-            "<div class='scrollable-box'>处理中...</div>",
+            initial_dataframe,
             log_html,
             0,
             "<div class='status-badge status-running'>🚀 开始批量处理</div>"

@@ -81,9 +81,13 @@ class HTMLGenerator:
                                 # Get validation reason from analysis_process
                                 validation_reason = analysis_process.get('validation_reason', '')
                                 predicted_answer = analysis_process.get('predicted_answer', '')
-                                predicted_analysis_process = analysis_process.get('predicted_analysis_process', '')
+                                predicted_analysis_process_dict = analysis_process.get('predicted_analysis_process', '')
+                                predicted_analysis_process = '\n'.join(f'{k} : {predicted_analysis_process_dict[k]}' for k in predicted_analysis_process_dict)
+                                
                                 reference_answer = analysis_process.get('reference_answer', '')
-                                reference_analysis_process = analysis_process.get('reference_analysis_process', '')
+                                reference_analysis_process_dict = analysis_process.get('reference_analysis_process', '')
+                                reference_analysis_process = '\n'.join(f'{k} : {reference_analysis_process_dict[k]}' for k in reference_analysis_process_dict)
+
 
                                 detail_html += f"""
                                 <div class='qa-item'>
