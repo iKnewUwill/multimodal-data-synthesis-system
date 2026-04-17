@@ -285,7 +285,7 @@ class DatabaseManager:
         
         try:
             # 将 QA pairs 转换为 JSON
-            qa_pairs_json = json.dumps([qa.dict() for qa in result.qa_pairs], ensure_ascii=False)
+            qa_pairs_json = json.dumps([qa.model_dump(mode='json') for qa in result.qa_pairs], ensure_ascii=False)
             
             cursor.execute("""
                 INSERT INTO results (
