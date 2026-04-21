@@ -66,7 +66,7 @@ class TestTaskDataConverter:
             公司名称="贵州茅台",
             统计截止日期="2024-12-31",
             评估维度="财务健康",
-            关键指标={"营业收入": 1000000},
+            financial_data={"营业收入": 1000000},
             status=TaskStatus.PENDING
         )
         tasks = [task]
@@ -106,7 +106,7 @@ class TestTaskDataConverter:
             公司名称="贵州茅台",
             统计截止日期="2024-12-31",
             评估维度="财务健康",
-            关键指标={}
+            financial_data={}
         )
         
         task2 = FinancialTaskInput(
@@ -114,7 +114,7 @@ class TestTaskDataConverter:
             公司名称="五粮液",
             统计截止日期="2024-12-31",
             评估维度="盈利能力",
-            关键指标={}
+            financial_data={}
         )
         
         task3 = FinancialTaskInput(
@@ -122,7 +122,7 @@ class TestTaskDataConverter:
             公司名称="平安银行",
             统计截止日期="2024-12-31",
             评估维度="偿债能力",
-            关键指标={}
+            financial_data={}
         )
         
         tasks = [task1, task2, task3]
@@ -163,7 +163,7 @@ class TestTaskDataConverter:
                 公司名称="任务1",
                 统计截止日期="2024-12-31",
                 评估维度="测试",
-                关键指标={},
+                financial_data={},
                 status=TaskStatus.PENDING
             ),
             FinancialTaskInput(
@@ -171,7 +171,7 @@ class TestTaskDataConverter:
                 公司名称="任务2",
                 统计截止日期="2024-12-31",
                 评估维度="测试",
-                关键指标={},
+                financial_data={},
                 status=TaskStatus.PROCESSING
             ),
             FinancialTaskInput(
@@ -179,7 +179,7 @@ class TestTaskDataConverter:
                 公司名称="任务3",
                 统计截止日期="2024-12-31",
                 评估维度="测试",
-                关键指标={},
+                financial_data={},
                 status=TaskStatus.COMPLETED
             ),
             FinancialTaskInput(
@@ -187,7 +187,7 @@ class TestTaskDataConverter:
                 公司名称="任务4",
                 统计截止日期="2024-12-31",
                 评估维度="测试",
-                关键指标={},
+                financial_data={},
                 status=TaskStatus.FAILED
             )
         ]
@@ -219,7 +219,7 @@ class TestTaskDataConverter:
             公司名称="贵州茅台",
             统计截止日期="2024-12-31",
             评估维度="财务健康",
-            关键指标={}
+            financial_data={}
         )
         
         task2 = FinancialTaskInput(
@@ -227,7 +227,7 @@ class TestTaskDataConverter:
             公司名称="五粮液",
             统计截止日期="2024-12-31",
             评估维度="盈利能力",
-            关键指标={}
+            financial_data={}
         )
         
         tasks = [task1, task2]
@@ -268,7 +268,7 @@ class TestTaskDataConverter:
                 公司名称="贵州茅台",
                 统计截止日期="2024-12-31",
                 评估维度="财务健康",
-                关键指标={}
+                financial_data={}
             )
         ]
         
@@ -308,14 +308,14 @@ class TestTaskDataConverter:
                 "公司名称": "贵州茅台",
                 "统计截止日期": "2024-12-31",
                 "评估维度": "财务健康",
-                "关键指标": {"营业收入": 1000000, "净利润": 500000}
+                "financial_data": {"营业收入": 1000000, "净利润": 500000}
             },
             {
                 "证券代码": "000858",
                 "公司名称": "五粮液",
                 "统计截止日期": "2024-12-31",
                 "评估维度": "盈利能力",
-                "关键指标": {"营业收入": 800000, "净利润": 400000}
+                "financial_data": {"营业收入": 800000, "净利润": 400000}
             }
         ]
         
@@ -392,7 +392,7 @@ class TestTaskDataConverterEdgeCases:
             公司名称="贵州茅台",
             统计截止日期="2024-12-31",
             评估维度="财务健康",
-            关键指标={}
+            financial_data={}
         )
         
         converter = TaskDataConverter()
@@ -411,7 +411,7 @@ class TestTaskDataConverterEdgeCases:
             公司名称="贵州茅台(SH) [A股]",  # Special characters
             统计截止日期="2024-12-31",
             评估维度="财务健康 & 盈利能力",  # Special character
-            关键指标={}
+            financial_data={}
         )
         
         converter = TaskDataConverter()
@@ -430,7 +430,7 @@ class TestTaskDataConverterEdgeCases:
                 公司名称=f"公司{i}",
                 统计截止日期="2024-12-31",
                 评估维度="测试",
-                关键指标={}
+                financial_data={}
             )
             for i in range(5)
         ]
@@ -453,14 +453,14 @@ def sample_tasks():
             公司名称="贵州茅台",
             统计截止日期="2024-12-31",
             评估维度="财务健康",
-            关键指标={"营业收入": 1000000}
+            financial_data={"营业收入": 1000000}
         ),
         FinancialTaskInput(
             证券代码="000858",
             公司名称="五粮液",
             统计截止日期="2024-12-31",
             评估维度="盈利能力",
-            关键指标={"营业收入": 800000}
+            financial_data={"营业收入": 800000}
         )
     ]
 

@@ -55,7 +55,7 @@ class DatabaseManager:
                     公司名称 TEXT NOT NULL,
                     统计截止日期 TEXT NOT NULL,
                     评估维度 TEXT NOT NULL,
-                    关键指标 TEXT NOT NULL,
+                    financial_data TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
@@ -72,6 +72,7 @@ class DatabaseManager:
                     证券代码 TEXT NOT NULL,
                     公司名称 TEXT NOT NULL,
                     评估维度 TEXT NOT NULL,
+                    financial_data TEXT NOT NULL,
                     status TEXT NOT NULL,
                     qa_pairs TEXT NOT NULL,
                     total_iterations INTEGER DEFAULT 0,
@@ -110,7 +111,7 @@ class DatabaseManager:
             cursor.execute("""
                 INSERT INTO tasks (
                     task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                    关键指标, status, created_at, started_at, completed_at, error_message
+                    financial_data, status, created_at, started_at, completed_at, error_message
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
@@ -118,7 +119,7 @@ class DatabaseManager:
                 task.公司名称,
                 task.统计截止日期,
                 task.评估维度,
-                json.dumps(task.关键指标, ensure_ascii=False),
+                json.dumps(task.financial_data, ensure_ascii=False),
                 task.status.value,
                 task.created_at.isoformat() if task.created_at else None,
                 task.started_at.isoformat() if task.started_at else None,
@@ -146,7 +147,7 @@ class DatabaseManager:
         try:
             cursor.execute("""
                 SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                       关键指标, status, created_at, started_at, completed_at, error_message
+                       financial_data, status, created_at, started_at, completed_at, error_message
                 FROM tasks WHERE task_id = ?
             """, (task_id,))
             
@@ -168,13 +169,13 @@ class DatabaseManager:
             if limit:
                 cursor.execute("""
                     SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                           关键指标, status, created_at, started_at, completed_at, error_message
+                           financial_data, status, created_at, started_at, completed_at, error_message
                     FROM tasks ORDER BY created_at DESC LIMIT ?
                 """, (limit,))
             else:
                 cursor.execute("""
                     SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                           关键指标, status, created_at, started_at, completed_at, error_message
+                           financial_data, status, created_at, started_at, completed_at, error_message
                     FROM tasks ORDER BY created_at DESC
                 """)
             
@@ -232,7 +233,7 @@ class DatabaseManager:
         try:
             query = """
                 SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                       关键指标, status, created_at, started_at, completed_at, error_message
+                       financial_data, status, created_at, started_at, completed_at, error_message
                 FROM tasks WHERE 1=1
             """
             params = []
@@ -268,7 +269,7 @@ class DatabaseManager:
             公司名称=row[2],
             统计截止日期=row[3],
             评估维度=row[4],
-            关键指标=json.loads(row[5]),
+            financial_data=json.loads(row[5]),
             status=TaskStatus(row[6]),
             created_at=datetime.fromisoformat(row[7]) if row[7] else None,
             started_at=datetime.fromisoformat(row[8]) if row[8] else None,
@@ -289,14 +290,15 @@ class DatabaseManager:
             
             cursor.execute("""
                 INSERT INTO results (
-                    task_id, 证券代码, 公司名称, 评估维度, status,
+                    task_id, 证券代码, 公司名称, 评估维度, financial_data, status,
                     qa_pairs, total_iterations, valid_qa_count, completed_at, output_path, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 result.task_id,
                 result.证券代码,
                 result.公司名称,
                 result.评估维度,
+                result.financial_data,
                 result.status.value,
                 qa_pairs_json,
                 result.total_iterations,
@@ -347,8 +349,7 @@ class DatabaseManager:
                     qa_pairs=qa_pairs,
                     total_iterations=row[6],
                     valid_qa_count=row[7],
-                    completed_at=datetime.fromisoformat(row[8]) if row[8] else None,
-                    output_path=row[9]
+                    completed_at=datetime.fromisoformat(row[8]) if row[8] else None
                 )
             return None
             
@@ -416,7 +417,7 @@ class DatabaseManager:
                         公司名称=result.公司名称,
                         统计截止日期="2024-12-31",  # 默认值
                         评估维度=result.评估维度,
-                        关键指标={},
+                        financial_data={},
                         status=result.status
                     )
                     self.add_task(task_input)

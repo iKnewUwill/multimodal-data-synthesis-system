@@ -87,7 +87,7 @@ class HTMLGenerator:
                                 reference_answer = analysis_process.get('reference_answer', '')
                                 reference_analysis_process_dict = analysis_process.get('reference_analysis_process', '')
                                 reference_analysis_process = '\n'.join(f'{k} : {reference_analysis_process_dict[k]}' for k in reference_analysis_process_dict)
-
+                                is_valid = analysis_process.get('is_valid', '')
 
                                 detail_html += f"""
                                 <div class='qa-item'>
@@ -112,6 +112,10 @@ class HTMLGenerator:
                                         <div style='background: #fff3e0; padding: 10px; border-radius: 5px; margin: 5px 0;'>
                                             <div style='color: #F57C00; font-weight: bold; margin-bottom: 5px;'>✨ 最终结论:</div>
                                             <div style='margin-left: 10px;'>{conclusion}</div>
+                                        </div>
+                                        <div style='background: #fff3e0; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+                                            <div style='color: #F57C00; font-weight: bold; margin-bottom: 5px;'>✨ 是否通过验证:</div>
+                                            <div style='margin-left: 10px;'>{"是" if is_valid else "否"}</div>
                                         </div>
                                     </div>
                                     <div class='qa-metrics'>

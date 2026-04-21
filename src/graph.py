@@ -105,7 +105,7 @@ class MultimodalSynthesisGraph:
             logger.info(f"[迭代 {state.current_iteration}] 提议者开始工作")
             state.current_state.status = "proposing"
 
-            # 调用提议者 - 使用 financial_data 替代 image_paths
+            # 调用提议者
             output = self.proposer.propose(
                 financial_data=state.task.financial_data,
                 task_type=state.task.task_type,
@@ -129,7 +129,7 @@ class MultimodalSynthesisGraph:
             logger.info(f"[迭代 {state.current_iteration}] 求解者开始工作")
             state.current_state.status = "solving"
 
-            # 调用求解者 - 使用 financial_data 替代 image_paths
+            # 调用求解者
             output = self.solver.solve(
                 financial_data=state.task.financial_data,
                 question=state.current_state.proposed_qa.question
@@ -151,7 +151,7 @@ class MultimodalSynthesisGraph:
             logger.info(f"[迭代 {state.current_iteration}] 验证者开始工作")
             state.current_state.status = "validating"
 
-            # 调用验证者 - 使用 financial_data 替代 image_paths
+            # 调用验证者
             validation = self.validator.validate(
                 financial_data=state.task.financial_data,
                 question=state.current_state.proposed_qa.question,
@@ -173,8 +173,7 @@ class MultimodalSynthesisGraph:
         """更新状态节点"""
         try:
             # 如果验证通过，添加到历史
-            if (state.current_state.validation and 
-                state.current_state.validation.is_valid):
+            if (state.current_state.validation ):
 
                 # 创建 FinancialQAResult 而不是 QAPair
                 qa_result = FinancialQAResult(
@@ -184,7 +183,8 @@ class MultimodalSynthesisGraph:
                         "reference_analysis_process": state.current_state.proposed_qa.analysis_process,
                         "predicted_answer": state.current_state.solved_output.answer or "",
                         "predicted_analysis_process": state.current_state.solved_output.analysis_process or "",
-                        "validation_reason": state.current_state.validation.reason
+                        "validation_reason": state.current_state.validation.reason,
+                        "is_valid":state.current_state.validation.is_valid
                     },
                     conclusion=state.current_state.proposed_qa.answer,
                     difficulty=state.current_difficulty,
@@ -248,7 +248,7 @@ class MultimodalSynthesisGraph:
                     证券代码=task_input.证券代码,
                     公司名称=task_input.公司名称,
                     评估维度=task_input.评估维度,
-                    financial_data=task_input.关键指标,
+                    financial_data=task_input.financial_data,
                     max_iterations=actual_max_iterations,
                     initial_difficulty=settings.INITIAL_DIFFICULTY,
                     difficulty_increment=settings.DIFFICULTY_INCREMENT
@@ -272,6 +272,7 @@ class MultimodalSynthesisGraph:
                 证券代码=task_input.证券代码,
                 公司名称=task_input.公司名称,
                 评估维度=task_input.评估维度,
+                financial_data=task_input.financial_data,
                 status=TaskStatus.COMPLETED,
                 qa_pairs=history_qa,
                 total_iterations=len(all_iterations),
@@ -295,6 +296,7 @@ class MultimodalSynthesisGraph:
                 证券代码=task_input.证券代码,
                 公司名称=task_input.公司名称,
                 评估维度=task_input.评估维度,
+                financial_data=task_input.financial_data,
                 status=TaskStatus.FAILED,
                 total_iterations=0,
                 valid_qa_count=0,

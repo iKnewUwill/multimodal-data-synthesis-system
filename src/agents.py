@@ -49,11 +49,10 @@ class MultimodalLLMClient:
             content = [{"type": "text", "text": user_prompt}]
 
             # 添加金融数据内容
-            if financial_data_str:
-                content.append({
-                    "type": "text",
-                    "text": f"\n财务数据：\n{financial_data_str}"
-                })
+            content.append({
+                "type": "text",
+                "text": f"\n财务数据：\n{financial_data_str}"
+            })
 
             messages.append({"role": "user", "content": content})
 

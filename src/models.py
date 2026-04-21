@@ -67,7 +67,7 @@ class FinancialTaskInput(BaseModel):
     公司名称: str = Field(..., description="公司名称")
     统计截止日期: str = Field(..., description="统计截止日期")
     评估维度: str = Field(..., description="评估维度")
-    关键指标: Dict[str, Any] = Field(..., description="关键指标数据")
+    financial_data: Dict[str, Any] = Field(..., description="financial_data数据")
     status: TaskStatus = Field(default=TaskStatus.PENDING, description="任务状态")
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
@@ -104,12 +104,12 @@ class FinancialTaskResult(BaseModel):
     证券代码: str
     公司名称: str
     评估维度: str
+    financial_data: Dict[str, Any]
     status: TaskStatus
     qa_pairs: List[FinancialQAResult] = Field(default_factory=list)
     total_iterations: int = 0
     valid_qa_count: int = 0
     completed_at: Optional[datetime] = None
-    output_path: Optional[str] = None
 
 
 class ValidationResult(BaseModel):
@@ -149,8 +149,6 @@ class SynthesisTask(BaseModel):
     task_id: str = Field(..., description="任务ID")
     task_type: str = Field(..., description="任务类型")
     task_description: Optional[str] = Field(None, description="任务描述")
-    images: List[ImageInfo] = Field(default_factory=list, description="图片列表")
-    files: List[FileInfo] = Field(default_factory=list, description="文件列表（通用）")
     max_iterations: int = Field(default=10, description="最大迭代次数")
     initial_difficulty: float = Field(default=0.3, description="初始难度")
     difficulty_increment: float = Field(default=0.1, description="难度递增")
@@ -172,7 +170,6 @@ class SynthesisResult(BaseModel):
     """合成结果"""
     task_id: str = Field(..., description="任务ID")
     task_type: str = Field(..., description="任务类型")
-    images: List[ImageInfo] = Field(..., description="图片列表")
     qa_pairs: List[QAPair] = Field(default_factory=list, description="生成的问答对")
     iterations: List[IterationState] = Field(default_factory=list, description="迭代状态")
     total_iterations: int = Field(default=0, description="总迭代次数")
@@ -189,12 +186,6 @@ class AgentState(BaseModel):
     """Agent 状态（用于 LangGraph）"""
     # 任务信息
     task: SynthesisTask
-
-    # 图片路径列表
-    image_paths: List[str] = Field(default_factory=list)
-
-    # 文件内容列表（文本类文件）
-    file_contents: List[str] = Field(default_factory=list)
 
     # 历史问答对（已验证通过的）- 支持两种类型
     history_qa_pairs: List[Any] = Field(default_factory=list)

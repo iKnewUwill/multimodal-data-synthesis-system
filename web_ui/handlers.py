@@ -67,7 +67,7 @@ class UIHandlers:
                     公司名称=item.get("公司名称", ""),
                     统计截止日期=item.get("统计截止日期", ""),
                     评估维度=item.get("评估维度", ""),
-                    关键指标=item.get("关键指标", {})
+                    financial_data=item.get("financial_data", {})
                 )
                 self.task_manager.add_task(task)
                 tasks.append(task)

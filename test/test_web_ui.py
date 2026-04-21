@@ -182,7 +182,7 @@ class TestTaskManagement:
                 公司名称=item.get("公司名称", ""),
                 统计截止日期=item.get("统计截止日期", ""),
                 评估维度=item.get("评估维度", ""),
-                关键指标=item.get("关键指标", {})
+                financial_data=item.get("financial_data", {})
             )
             ui_instance.task_manager.add_task(task)
 
@@ -217,7 +217,7 @@ class TestBatchProcessing:
                 公司名称=item.get("公司名称", ""),
                 统计截止日期=item.get("统计截止日期", ""),
                 评估维度=item.get("评估维度", ""),
-                关键指标=item.get("关键指标", {})
+                financial_data=item.get("financial_data", {})
             )
             ui_instance.task_manager.add_task(task)
 
@@ -247,7 +247,7 @@ class TestBatchProcessing:
                 公司名称=item.get("公司名称", ""),
                 统计截止日期=item.get("统计截止日期", ""),
                 评估维度=item.get("评估维度", ""),
-                关键指标=item.get("关键指标", {})
+                financial_data=item.get("financial_data", {})
             )
             ui_instance.task_manager.add_task(task)
 
@@ -284,7 +284,7 @@ class TestTaskProcessing:
             公司名称=item.get("公司名称", ""),
             统计截止日期=item.get("统计截止日期", ""),
             评估维度=item.get("评估维度", ""),
-            关键指标=item.get("关键指标", {})
+            financial_data=item.get("financial_data", {})
         )
 
         # Mock graph
@@ -311,7 +311,7 @@ class TestTaskProcessing:
             公司名称=item.get("公司名称", ""),
             统计截止日期=item.get("统计截止日期", ""),
             评估维度=item.get("评估维度", ""),
-            关键指标=item.get("关键指标", {})
+            financial_data=item.get("financial_data", {})
         )
 
         # Mock graph 抛出异常
@@ -457,13 +457,13 @@ class TestDataValidation:
             公司名称=item.get("公司名称", ""),
             统计截止日期=item.get("统计截止日期", ""),
             评估维度=item.get("评估维度", ""),
-            关键指标=item.get("关键指标", {})
+            financial_data=item.get("financial_data", {})
         )
 
         assert task.证券代码 == "000001"
         assert task.公司名称 == "平安银行"
         assert task.评估维度 == "一、偿债能力"
-        assert len(task.关键指标) > 0
+        assert len(task.financial_data) > 0
 
     def test_task_input_with_missing_fields(self, ui_instance):
         """测试缺少字段的任务输入"""
@@ -472,7 +472,7 @@ class TestDataValidation:
             公司名称="",
             统计截止日期="",
             评估维度="",
-            关键指标={}
+            financial_data={}
         )
 
         # 验证对象可以创建，即使字段为空
@@ -493,7 +493,7 @@ class TestProgressTracking:
                 公司名称=item.get("公司名称", ""),
                 统计截止日期=item.get("统计截止日期", ""),
                 评估维度=item.get("评估维度", ""),
-                关键指标=item.get("关键指标", {})
+                financial_data=item.get("financial_data", {})
             )
             ui_instance.task_manager.add_task(task)
 
@@ -538,7 +538,7 @@ class TestErrorHandling:
                 公司名称=item.get("公司名称", ""),
                 统计截止日期=item.get("统计截止日期", ""),
                 评估维度=item.get("评估维度", ""),
-                关键指标=item.get("关键指标", {})
+                financial_data=item.get("financial_data", {})
             )
             ui_instance.task_manager.add_task(task)
 

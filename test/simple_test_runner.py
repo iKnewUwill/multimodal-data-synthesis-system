@@ -87,14 +87,14 @@ def test_task_loading():
             "公司名称": "平安银行",
             "统计截止日期": "2024-12-31",
             "评估维度": "一、偿债能力",
-            "关键指标": {"核心指标": {"资产负债率": 0.91}}
+            "financial_data": {"核心指标": {"资产负债率": 0.91}}
         },
         {
             "证券代码": "000002",
             "公司名称": "万科A",
             "统计截止日期": "2024-12-31",
             "评估维度": "二、现金流质量",
-            "关键指标": {"核心指标": {"经营现金流净额(CFO)": 63336000000.0}}
+            "financial_data": {"核心指标": {"经营现金流净额(CFO)": 63336000000.0}}
         }
     ]
 
@@ -118,7 +118,7 @@ def test_task_loading():
                 公司名称=item.get("公司名称", ""),
                 统计截止日期=item.get("统计截止日期", ""),
                 评估维度=item.get("评估维度", ""),
-                关键指标=item.get("关键指标", {})
+                financial_data=item.get("financial_data", {})
             )
             ui.task_manager.add_task(task)
             tasks.append(task)
@@ -266,13 +266,13 @@ def test_task_input_validation():
         公司名称="平安银行",
         统计截止日期="2024-12-31",
         评估维度="一、偿债能力",
-        关键指标={"核心指标": {"资产负债率": 0.91}}
+        financial_data={"核心指标": {"资产负债率": 0.91}}
     )
 
     assert task1.证券代码 == "000001", "证券代码不正确"
     assert task1.公司名称 == "平安银行", "公司名称不正确"
     assert task1.评估维度 == "一、偿债能力", "评估维度不正确"
-    assert len(task1.关键指标) > 0, "关键指标不应该为空"
+    assert len(task1.financial_data) > 0, "financial_data不应该为空"
 
     # 测试空数据
     task2 = FinancialTaskInput(
@@ -280,7 +280,7 @@ def test_task_input_validation():
         公司名称="",
         统计截止日期="",
         评估维度="",
-        关键指标={}
+        financial_data={}
     )
 
     assert task2 is not None, "即使字段为空，也应该能创建任务"
