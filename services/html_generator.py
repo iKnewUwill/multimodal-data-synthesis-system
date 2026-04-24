@@ -117,6 +117,9 @@ class HTMLGenerator:
                                             <div style='color: #F57C00; font-weight: bold; margin-bottom: 5px;'>✨ 是否通过验证:</div>
                                             <div style='margin-left: 10px;'>{"是" if is_valid else "否"}</div>
                                         </div>
+                                        <div style='background: {"#e8f5e9" if qa.get("is_positive_sample", analysis_process.get("is_positive_sample", True)) else "#fce4ec"}; padding: 10px; border-radius: 5px; margin: 5px 0;'>
+                                            <div style='color: {"#388E3C" if qa.get("is_positive_sample", analysis_process.get("is_positive_sample", True)) else "#C62828"}; font-weight: bold; margin-bottom: 5px;'>{"✅ 正样本" if qa.get("is_positive_sample", analysis_process.get("is_positive_sample", True)) else "⚠️ 负样本（错误注入）"}</div>
+                                        </div>
                                     </div>
                                     <div class='qa-metrics'>
                                         <strong>📊 质量指标:</strong>

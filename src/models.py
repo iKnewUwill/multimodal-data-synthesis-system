@@ -68,6 +68,7 @@ class FinancialTaskInput(BaseModel):
     统计截止日期: str = Field(..., description="统计截止日期")
     评估维度: str = Field(..., description="评估维度")
     financial_data: Dict[str, Any] = Field(..., description="financial_data数据")
+    is_positive_sample: bool = Field(default=True, description="是否为正样本（True=正样本, False=负样本/错误注入）")
     status: TaskStatus = Field(default=TaskStatus.PENDING, description="任务状态")
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
@@ -96,6 +97,7 @@ class FinancialQAResult(BaseModel):
     conclusion: str = Field(..., description="分析结论")
     difficulty: float = Field(..., ge=0.0, le=1.0)
     iteration: int
+    is_positive_sample: bool = Field(default=True, description="是否为正样本")
     created_at: datetime = Field(default_factory=datetime.now)
 
 class FinancialTaskResult(BaseModel):
@@ -137,6 +139,7 @@ class IterationState(BaseModel):
     """迭代状态"""
     iteration: int = Field(..., description="当前迭代轮次")
     difficulty: float = Field(..., description="当前难度等级")
+    is_positive_sample: bool = Field(default=True, description="是否为正样本")
     proposed_qa: Optional[ProposerOutput] = Field(None, description="提议的问答对")
     solved_output: Optional[SolverOutput] = Field(None, description="求解的输出")
     validation: Optional[ValidationResult] = Field(None, description="验证结果")

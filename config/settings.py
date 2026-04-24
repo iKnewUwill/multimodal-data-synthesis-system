@@ -65,6 +65,9 @@ class SystemSettings(BaseModel):
     
     # 验证通过阈值
     VALIDATION_THRESHOLD: float = Field(default=0.8, description="验证通过的语义相似度阈值")
+    
+    # 负样本生成比例
+    NEGATIVE_SAMPLE_RATIO: float = Field(default=0.3, ge=0.0, le=1.0, description="负样本生成比例（0-1之间，默认0.3表示30%的样本为负样本）")
 
     # Execution & Performance Settings
     PARALLEL_TASK_COUNT: int = Field(

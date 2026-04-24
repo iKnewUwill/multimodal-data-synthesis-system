@@ -1,6 +1,7 @@
 """UI Handlers - Event handlers for Gradio interface"""
 
 import json
+import random
 import concurrent.futures
 from queue import Queue
 import threading
@@ -62,12 +63,15 @@ class UIHandlers:
             # Create tasks (append mode)
             tasks = []
             for item in data:
+                # 按 NEGATIVE_SAMPLE_RATIO 比例随机标记负样本（样本级粒度）
+                is_positive = random.random() > settings.NEGATIVE_SAMPLE_RATIO
                 task = FinancialTaskInput(
                     证券代码=item.get("证券代码", ""),
                     公司名称=item.get("公司名称", ""),
                     统计截止日期=item.get("统计截止日期", ""),
                     评估维度=item.get("评估维度", ""),
-                    financial_data=item.get("financial_data", {})
+                    financial_data=item.get("financial_data", {}),
+                    is_positive_sample=is_positive
                 )
                 self.task_manager.add_task(task)
                 tasks.append(task)
@@ -468,3 +472,52 @@ class UIHandlers:
             return "✅ Prompt 配置已保存！"
         except Exception as e:
             return f"❌ 保存失败：{str(e)}"
+
+    def save_prompts_config_full(self, p_sys, p_user, s_sys, s_user, ns_sys, ns_user, v_sys, v_user, nv_sys, nv_user):
+        """Handler for full prompts config save (including negative sample prompts)
+        
+        Args:
+            p_sys: Proposer system prompt
+            p_user: Proposer user prompt
+            s_sys: Solver system prompt
+            s_user: Solver user prompt
+            ns_sys: Negative solver system prompt
+            ns_user: Negative solver user prompt
+            v_sys: Validator system prompt
+            v_user: Validator user prompt
+            nv_sys: Negative validator system prompt
+            nv_user: Negative validator user prompt
+            
+        Returns:
+            Status message indicating success or failure
+        """
+        try:
+            prompts_config.proposer_system_prompt = p_sys
+            prompts_config.proposer_user_prompt = p_user
+            prompts_config.solver_system_prompt = s_sys
+            prompts_config.solver_user_prompt = s_user
+            prompts_config.negative_solver_system_prompt = ns_sys
+            prompts_config.negative_solver_user_prompt = ns_user
+            prompts_config.validator_system_prompt = v_sys
+            prompts_config.validator_user_prompt = v_user
+            prompts_config.negative_validator_system_prompt = nv_sys
+            prompts_config.negative_validator_user_prompt = nv_user
+            prompts_config.save_to_file()
+            return "✅ Prompt 配置已保存（含负样本提示词）！"
+        except Exception as e:
+            return f"❌ 保存失败：{str(e)}"
+    
+    def update_negative_sample_ratio(self, ratio: float):
+        """Update negative sample ratio in settings
+        
+        Args:
+            ratio: New negative sample ratio (0.0-1.0)
+            
+        Returns:
+            Status message
+        """
+        try:
+            settings.NEGATIVE_SAMPLE_RATIO = ratio
+            return f"✅ 负样本比例已更新为 {ratio:.2f}"
+        except Exception as e:
+            return f"❌ 更新失败：{str(e)}"

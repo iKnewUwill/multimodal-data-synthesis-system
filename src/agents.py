@@ -173,6 +173,47 @@ class SolverAgent:
             logger.error(f"求解者执行失败: {str(e)}")
             raise
 
+    def solve_negative(
+        self,
+        financial_data: Optional[Dict[str, Any]] = None,
+        question: Optional[str] = None
+    ) -> SolverOutput:
+        """负样本求解 - 基于金融数据生成包含错误的答案"""
+        logger.info(f"负样本求解者开始回答问题: {question[:50] if question else 'N/A'}...")
+
+        try:
+            # 格式化负样本 Prompt
+            system_prompt, user_prompt = self.prompts_config.format_negative_solver_prompt(
+                question=question or ""
+            )
+
+            # 将financial_data转换为JSON字符串
+            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+
+            # 调用 LLM
+            response = self.llm_client.call_with_financial_data(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                financial_data_str=financial_data_str
+            )
+
+            # 解析响应
+            result = extract_json_from_text(response)
+
+            # 映射字段
+            output = SolverOutput(
+                answer=result.get("分析结论", result.get("answer", "")),
+                analysis_process = result["分析过程"],
+                conclusion = result["分析结论"]
+            )
+
+            logger.info(f"负样本求解者生成答案: {output.answer[:50]}...")
+            return output
+
+        except Exception as e:
+            logger.error(f"负样本求解者执行失败: {str(e)}")
+            raise
+
 
 class ValidatorAgent:
     """验证者 Agent - 验证答案的正确性"""
@@ -187,18 +228,26 @@ class ValidatorAgent:
         financial_data: Optional[Dict[str, Any]] = None,
         question: Optional[str] = None,
         reference_answer: Optional[str] = None,
-        predicted_answer: Optional[str] = None
+        predicted_answer: Optional[str] = None,
+        is_positive_sample: bool = True
     ) -> ValidationResult:
         """验证答案的正确性"""
         logger.info("验证者开始验证答案")
 
         try:
-            # 格式化 Prompt
-            system_prompt, user_prompt = self.prompts_config.format_validator_prompt(
-                question=question or "",
-                reference_answer=reference_answer or "",
-                predicted_answer=predicted_answer or ""
-            )
+            # 格式化 Prompt - 正负样本使用不同的验证提示词
+            if is_positive_sample:
+                system_prompt, user_prompt = self.prompts_config.format_validator_prompt(
+                    question=question or "",
+                    reference_answer=reference_answer or "",
+                    predicted_answer=predicted_answer or ""
+                )
+            else:
+                system_prompt, user_prompt = self.prompts_config.format_negative_validator_prompt(
+                    question=question or "",
+                    reference_answer=reference_answer or "",
+                    predicted_answer=predicted_answer or ""
+                )
 
             # 将financial_data转换为JSON字符串
             financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None

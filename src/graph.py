@@ -82,9 +82,11 @@ class MultimodalSynthesisGraph:
             )
             
             # 创建新的迭代状态
+            is_positive = state.task.financial_data.get("is_positive_sample", True) if state.task.financial_data else True
             state.current_state = IterationState(
                 iteration=state.current_iteration,
                 difficulty=state.current_difficulty,
+                is_positive_sample=is_positive,
                 status="pending"
             )
             
@@ -130,10 +132,16 @@ class MultimodalSynthesisGraph:
             state.current_state.status = "solving"
 
             # 调用求解者
-            output = self.solver.solve(
-                financial_data=state.task.financial_data,
-                question=state.current_state.proposed_qa.question
-            )
+            if state.current_state.is_positive_sample:
+                output = self.solver.solve(
+                    financial_data=state.task.financial_data,
+                    question=state.current_state.proposed_qa.question
+                )
+            else:
+                output = self.solver.solve_negative(
+                    financial_data=state.task.financial_data,
+                    question=state.current_state.proposed_qa.question
+                )
 
             state.current_state.solved_output = output
             logger.info(f"[迭代 {state.current_iteration}] 求解者完成")
@@ -156,7 +164,8 @@ class MultimodalSynthesisGraph:
                 financial_data=state.task.financial_data,
                 question=state.current_state.proposed_qa.question,
                 reference_answer=state.current_state.proposed_qa.answer,
-                predicted_answer=state.current_state.solved_output.answer
+                predicted_answer=state.current_state.solved_output.answer,
+                is_positive_sample=state.current_state.is_positive_sample
             )
 
             state.current_state.validation = validation
@@ -188,7 +197,8 @@ class MultimodalSynthesisGraph:
                     },
                     conclusion=state.current_state.proposed_qa.answer,
                     difficulty=state.current_difficulty,
-                    iteration=state.current_iteration
+                    iteration=state.current_iteration,
+                    is_positive_sample=state.current_state.is_positive_sample
                 )
                 state.history_qa_pairs.append(qa_result)
                 state.current_state.status = "completed"
@@ -240,6 +250,10 @@ class MultimodalSynthesisGraph:
             task_input.status = TaskStatus.PROCESSING
             task_input.started_at = datetime.now()
 
+            # Copy financial_data and inject is_positive_sample flag
+            task_financial_data = dict(task_input.financial_data) if task_input.financial_data else {}
+            task_financial_data["is_positive_sample"] = task_input.is_positive_sample
+
             # 从 FinancialTaskInput 创建 AgentState
             initial_state = AgentState(
                 task=SynthesisTask(
@@ -248,7 +262,7 @@ class MultimodalSynthesisGraph:
                     证券代码=task_input.证券代码,
                     公司名称=task_input.公司名称,
                     评估维度=task_input.评估维度,
-                    financial_data=task_input.financial_data,
+                    financial_data=task_financial_data,
                     max_iterations=actual_max_iterations,
                     initial_difficulty=settings.INITIAL_DIFFICULTY,
                     difficulty_increment=settings.DIFFICULTY_INCREMENT

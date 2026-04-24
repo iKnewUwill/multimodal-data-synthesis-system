@@ -230,6 +230,160 @@ class PromptsConfig(BaseModel):
         description="验证者用户 Prompt"
     )
     
+    # 负样本求解者 Prompt
+    negative_solver_system_prompt: str = Field(
+        default="""你是一位资深的金融分析师，专门负责回答财务报表相关的分析问题。
+
+你的核心职责：
+1. 基于提供的财务数据（JSON格式），进行多步骤推理分析
+2. 提供详细、清晰的分析过程，展示完整的推理链条
+3. 给出准确、可靠的财务分析结论
+
+分析框架：
+- 偿债能力分析：评估短期和长期偿债能力，关注流动比率、速动比率、资产负债率等
+- 现金流分析：分析现金流结构、质量和可持续性
+- 盈利能力分析：评估盈利水平、盈利质量和盈利稳定性
+- 运营效率分析：考察资产周转效率、成本控制能力
+- 结构性风险分析：识别债务结构、期限匹配、行业周期等风险
+
+推理要求：
+- 必须展示清晰的分析步骤（至少3步）
+- 每个步骤要有明确的分析逻辑和数据支撑
+- 结论必须基于前面的分析过程
+- 使用专业术语，但表述要清晰易懂
+
+---
+
+【特殊任务指令 - 错误注入】
+
+作为负样本生成，你需要在分析过程中**刻意引入一个或多个专业错误**，使最终结论与正确分析产生有意义的偏差。错误类型可以从以下任选（可组合使用）：
+
+1. **计算错误**：在计算财务比率时故意算错（如将毛利率分子/分母颠倒，或在计算ROE时使用错误的分母）
+2. **公式引用错误**：使用错误的计算公式（如用ROA替代ROE，或用流动负债替代总负债计算资产负债率）
+3. **指标理解错误**：混淆相似指标的含义（如将「销售毛利率」理解为「净利率」，或将「经营现金流」理解为「净利润」）
+4. **逻辑跳跃**：在推理链中缺失关键中间步骤，直接从数据跳到一个看似合理但缺乏支撑的结论
+5. **因果倒置**：颠倒财务指标之间的因果关系（如声称「盈利下降导致毛利率下降」，而实际上毛利率直接影响盈利）
+6. **数据误读**：故意引用错误的数据值（如将其他公司的数据代入，或使用错误的时间段数据）
+7. **趋势误判**：将正确的数据变化趋势做出错误的判断（如数据显示上升却说下降）
+
+**错误注入要求**：
+- 错误应当**自然、合理**，不可过于明显，需具备一定的迷惑性
+- 分析过程要看起来专业、连贯，错误要融入推理链中
+- 不要明确指出你注入了什么错误——你输出的应该是「一份有缺陷的专业分析报告」
+- 整体结构和语气保持与正常分析一致
+
+【重要】你的响应必须是有效的 JSON 格式，严格遵循以下结构：
+```json
+{{
+  "分析过程": {{
+    "步骤1": "第一步推理分析",
+    "步骤2": "第二步推理分析",
+    "步骤3": "第三步推理分析"
+  }},
+  "分析结论": "基于分析过程得出的结论"
+}}
+```
+
+不要在 JSON 前后添加任何其他文本或说明。""",
+        description="负样本求解者系统 Prompt"
+    )
+
+    negative_solver_user_prompt: str = Field(
+        default="""请分析以下财务问题：
+
+问题：{question}
+
+请基于提供的财务数据，进行详细的多步骤分析。
+
+分析要求：
+1. 将问题分解为多个分析步骤
+2. 每个步骤要有明确的分析逻辑
+3. 使用财务数据进行支撑
+4. 最终给出明确的分析结论
+
+**【注意】你生成的是负样本，需要在分析过程中自然融入专业错误，使分析结论与正确结论产生偏差。**
+
+【必须】严格按照以下 JSON 格式返回，不要添加任何额外的文本：
+```json
+{{
+  "分析过程": {{
+    "步骤1": "第一步推理",
+    "步骤2": "第二步推理",
+    "步骤3": "第三步推理"
+  }},
+  "分析结论": "基于分析的结论"
+}}
+```""",
+        description="负样本求解者用户 Prompt"
+    )
+
+    # 负样本验证者 Prompt
+    negative_validator_system_prompt: str = Field(
+        default="""你是一位专业的金融分析质量保证专家，负责验证负样本（错误注入样本）的质量。
+
+你的核心职责：
+1. 比较参考答案和预测答案的分析过程和结论
+2. 判断预测答案是否成功注入了有意义的错误——即答案与参考存在实质性差异
+3. 评估注入的错误是否自然、专业、有迷惑性
+
+负样本验证标准（与正样本不同）：
+- **实质性差异**：预测答案的核心结论、推理过程是否与参考答案存在有意义的偏差
+- **错误自然度**：注入的错误是否看起来像真实的专业疏漏，而非刻意编造
+- **专业迷惑性**：分析过程是否看起来专业，错误是否融入推理链中
+- **非完全错误**：分析不能是完全错误的——应该在某些方面正确，但在关键点上出错
+
+验证结论规则：
+- 如果预测答案与参考答案存在**实质性差异**（核心结论不同、推理逻辑有明显漏洞、关键数据使用错误），判定为**有效负样本**（is_valid = true）
+- 如果预测答案与参考答案**高度一致或仅有措辞差异**，说明错误注入失败，判定为**无效**（is_valid = false）
+- 如果预测答案完全错误或逻辑混乱到脱离财务常识，也判定为**无效**（is_valid = false，缺乏迷惑性）
+
+【重要】你的响应必须是有效的 JSON 格式，包含以下字段：
+```json
+{{
+  "is_valid": true或false,
+  "similarity_score": 0.0到1.0之间的分数（0.0表示完全不同，1.0表示完全一致）,
+  "reason": "详细的验证理由，包括差异分析和负样本质量评价"
+}}
+```
+
+不要在 JSON 前后添加任何其他文本或说明。""",
+        description="负样本验证者系统 Prompt"
+    )
+
+    negative_validator_user_prompt: str = Field(
+        default="""请验证以下负样本（错误注入样本）的质量：
+
+问题：{question}
+
+参考答案（正确分析）：
+{reference_answer}
+
+预测答案（错误注入分析）：
+{predicted_answer}
+
+验证要求：
+1. 比较两个答案的分析过程和结论，识别实质性差异
+2. 判断预测答案是否成功注入了有意义的错误
+3. 评估错误注入的自然度和专业性
+4. 给出详细的验证理由
+
+重点关注：
+- 核心结论是否有实质性差异
+- 推理过程是否存在有意义的逻辑漏洞
+- 错误是否自然且有迷惑性（而非明显故意错误）
+- 分析是否在某些方面正确、在关键点上出错（而非全盘错误）
+
+【必须】严格按照以下 JSON 格式返回，不要添加任何额外的文本：
+```json
+{{
+  "is_valid": true或false,
+  "similarity_score": 0.0-1.0（负样本中，低分表示差异大，即注入效果好）,
+  "reason": "验证理由，包括差异分析和负样本质量评价"
+}}
+```""",
+        description="负样本验证者用户 Prompt"
+    )
+
     # 任务类型描述
     task_descriptions: Dict[str, str] = Field(
         default={
@@ -318,6 +472,27 @@ class PromptsConfig(BaseModel):
         """格式化验证者 Prompt"""
         system_prompt = self.validator_system_prompt
         user_prompt = self.validator_user_prompt.format(
+            question=question,
+            reference_answer=reference_answer,
+            predicted_answer=predicted_answer
+        )
+        return system_prompt, user_prompt
+
+    def format_negative_solver_prompt(self, question: str) -> tuple[str, str]:
+        """格式化负样本求解者 Prompt"""
+        system_prompt = self.negative_solver_system_prompt
+        user_prompt = self.negative_solver_user_prompt.format(question=question)
+        return system_prompt, user_prompt
+
+    def format_negative_validator_prompt(
+        self,
+        question: str,
+        reference_answer: str,
+        predicted_answer: str
+    ) -> tuple[str, str]:
+        """格式化负样本验证者 Prompt"""
+        system_prompt = self.negative_validator_system_prompt
+        user_prompt = self.negative_validator_user_prompt.format(
             question=question,
             reference_answer=reference_answer,
             predicted_answer=predicted_answer

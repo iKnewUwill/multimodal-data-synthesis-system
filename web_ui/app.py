@@ -121,6 +121,13 @@ class MultimodalSynthesisUI:
             outputs=[outputs['stop_status']]
         )
         
+        # Negative sample ratio slider change
+        inputs['negative_sample_ratio'].change(
+            fn=self.handlers.update_negative_sample_ratio,
+            inputs=[inputs['negative_sample_ratio']],
+            outputs=[outputs['load_status']]
+        )
+        
         # DataFrame selection - direct click interaction
         outputs['task_dataframe'].select(
             fn=self.handlers.handle_dataframe_selection,
@@ -145,14 +152,18 @@ class MultimodalSynthesisUI:
     def _wire_prompts_config_handlers(self, inputs):
         """Connect prompts config handlers"""
         inputs['save_prompts_btn'].click(
-            fn=self.handlers.save_prompts_config,
+            fn=self.handlers.save_prompts_config_full,
             inputs=[
                 inputs['proposer_system'],
                 inputs['proposer_user'],
                 inputs['solver_system'],
                 inputs['solver_user'],
+                inputs['neg_solver_system'],
+                inputs['neg_solver_user'],
                 inputs['validator_system'],
-                inputs['validator_user']
+                inputs['validator_user'],
+                inputs['neg_validator_system'],
+                inputs['neg_validator_user']
             ],
             outputs=[inputs['prompts_status']]
         )

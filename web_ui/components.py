@@ -4,6 +4,7 @@ import gradio as gr
 from typing import Tuple, Dict
 from config.llm_config import LLMConfig
 from config.prompts import PromptsConfig
+from config.settings import settings
 
 
 class UIComponents:
@@ -27,6 +28,7 @@ class UIComponents:
                 with gr.Group():
                     max_iterations = gr.Slider(minimum=1, maximum=20, value=10, step=1, label="最大迭代次数", info="每个任务生成的问答对数量")
                     parallel_count = gr.Slider(minimum=1, maximum=10, value=3, step=1, label="并行任务数", info="同时处理的任务数量")
+                    negative_sample_ratio = gr.Slider(minimum=0.0, maximum=1.0, value=settings.NEGATIVE_SAMPLE_RATIO, step=0.05, label="负样本比例", info="被标记为负样本的样本占比（粒度为样本级别）")
                 
                 with gr.Row():
                     start_btn = gr.Button("🚀 开始批量处理", variant="primary", size="lg")
@@ -72,6 +74,7 @@ class UIComponents:
             'file_input': file_input,
             'max_iterations': max_iterations,
             'parallel_count': parallel_count,
+            'negative_sample_ratio': negative_sample_ratio,
             'start_btn': start_btn,
             'stop_btn': stop_btn,
             'refresh_btn': refresh_btn
@@ -128,9 +131,17 @@ class UIComponents:
             solver_system = gr.Textbox(label="系统 Prompt", value=prompts_config.solver_system_prompt, lines=12, max_lines=20)
             solver_user = gr.Textbox(label="用户 Prompt 模板", value=prompts_config.solver_user_prompt, lines=10, max_lines=15)
         
+        with gr.Accordion("⚠️ 负样本求解者 Prompt", open=False):
+            neg_solver_system = gr.Textbox(label="系统 Prompt（负样本错误注入）", value=prompts_config.negative_solver_system_prompt, lines=15, max_lines=25)
+            neg_solver_user = gr.Textbox(label="用户 Prompt 模板（负样本）", value=prompts_config.negative_solver_user_prompt, lines=10, max_lines=15)
+        
         with gr.Accordion("✅ 验证者 Prompt", open=False):
             validator_system = gr.Textbox(label="系统 Prompt", value=prompts_config.validator_system_prompt, lines=12, max_lines=20)
             validator_user = gr.Textbox(label="用户 Prompt 模板", value=prompts_config.validator_user_prompt, lines=12, max_lines=20)
+        
+        with gr.Accordion("🔍 负样本验证者 Prompt", open=False):
+            neg_validator_system = gr.Textbox(label="系统 Prompt（负样本验证）", value=prompts_config.negative_validator_system_prompt, lines=12, max_lines=20)
+            neg_validator_user = gr.Textbox(label="用户 Prompt 模板（负样本验证）", value=prompts_config.negative_validator_user_prompt, lines=10, max_lines=15)
         
         save_prompts_btn = gr.Button("💾 保存 Prompt 配置", variant="primary")
         prompts_status = gr.Markdown("")
@@ -140,8 +151,12 @@ class UIComponents:
             'proposer_user': proposer_user,
             'solver_system': solver_system,
             'solver_user': solver_user,
+            'neg_solver_system': neg_solver_system,
+            'neg_solver_user': neg_solver_user,
             'validator_system': validator_system,
             'validator_user': validator_user,
+            'neg_validator_system': neg_validator_system,
+            'neg_validator_user': neg_validator_user,
             'save_prompts_btn': save_prompts_btn,
             'prompts_status': prompts_status
         }
