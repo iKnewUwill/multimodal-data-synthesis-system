@@ -263,6 +263,7 @@ class MultimodalSynthesisGraph:
                     公司名称=task_input.公司名称,
                     评估维度=task_input.评估维度,
                     financial_data=task_financial_data,
+                    is_positive_sample=task_input.is_positive_sample,
                     max_iterations=actual_max_iterations,
                     initial_difficulty=settings.INITIAL_DIFFICULTY,
                     difficulty_increment=settings.DIFFICULTY_INCREMENT

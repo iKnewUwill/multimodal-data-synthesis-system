@@ -155,6 +155,7 @@ class SynthesisTask(BaseModel):
     max_iterations: int = Field(default=10, description="最大迭代次数")
     initial_difficulty: float = Field(default=0.3, description="初始难度")
     difficulty_increment: float = Field(default=0.1, description="难度递增")
+    is_positive_sample: bool = Field(default=True, description="是否为正样本（True=正样本, False=负样本/错误注入）")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     
     # 金融财务相关字段（可选，用于向后兼容）

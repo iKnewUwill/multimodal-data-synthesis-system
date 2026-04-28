@@ -56,6 +56,7 @@ class DatabaseManager:
                     统计截止日期 TEXT NOT NULL,
                     评估维度 TEXT NOT NULL,
                     financial_data TEXT NOT NULL,
+                    is_positive_sample TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
@@ -111,8 +112,8 @@ class DatabaseManager:
             cursor.execute("""
                 INSERT INTO tasks (
                     task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                    financial_data, status, created_at, started_at, completed_at, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    financial_data, is_positive_sample, status, created_at, started_at, completed_at, error_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task.task_id,
                 task.证券代码,
@@ -120,6 +121,7 @@ class DatabaseManager:
                 task.统计截止日期,
                 task.评估维度,
                 json.dumps(task.financial_data, ensure_ascii=False),
+                task.is_positive_sample,
                 task.status.value,
                 task.created_at.isoformat() if task.created_at else None,
                 task.started_at.isoformat() if task.started_at else None,
@@ -147,7 +149,7 @@ class DatabaseManager:
         try:
             cursor.execute("""
                 SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                       financial_data, status, created_at, started_at, completed_at, error_message
+                       financial_data,is_positive_sample, status, created_at, started_at, completed_at, error_message
                 FROM tasks WHERE task_id = ?
             """, (task_id,))
             
@@ -169,13 +171,13 @@ class DatabaseManager:
             if limit:
                 cursor.execute("""
                     SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                           financial_data, status, created_at, started_at, completed_at, error_message
+                           financial_data,is_positive_sample, status, created_at, started_at, completed_at, error_message
                     FROM tasks ORDER BY created_at DESC LIMIT ?
                 """, (limit,))
             else:
                 cursor.execute("""
                     SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                           financial_data, status, created_at, started_at, completed_at, error_message
+                           financial_data,is_positive_sample, status, created_at, started_at, completed_at, error_message
                     FROM tasks ORDER BY created_at DESC
                 """)
             
@@ -233,7 +235,7 @@ class DatabaseManager:
         try:
             query = """
                 SELECT task_id, 证券代码, 公司名称, 统计截止日期, 评估维度,
-                       financial_data, status, created_at, started_at, completed_at, error_message
+                       financial_data,is_positive_sample, status, created_at, started_at, completed_at, error_message
                 FROM tasks WHERE 1=1
             """
             params = []
@@ -270,11 +272,12 @@ class DatabaseManager:
             统计截止日期=row[3],
             评估维度=row[4],
             financial_data=json.loads(row[5]),
-            status=TaskStatus(row[6]),
-            created_at=datetime.fromisoformat(row[7]) if row[7] else None,
-            started_at=datetime.fromisoformat(row[8]) if row[8] else None,
-            completed_at=datetime.fromisoformat(row[9]) if row[9] else None,
-            error_message=row[10]
+            is_positive_sample=(row[6]),
+            status=TaskStatus(row[7]),
+            created_at=datetime.fromisoformat(row[8]) if row[8] else None,
+            started_at=datetime.fromisoformat(row[9]) if row[9] else None,
+            completed_at=datetime.fromisoformat(row[10]) if row[10] else None,
+            error_message=row[11]
         )
     
     # ============ 结果操作 ============
