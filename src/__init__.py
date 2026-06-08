@@ -8,7 +8,9 @@ from .utils import *
 __all__ = [
     'MultimodalSynthesisGraph',
     'MultimodalLLMClient',
+    'StrategyModelClient',
     'ProposerAgent',
     'SolverAgent',
+    'StrategyModelSampler',
     'ValidatorAgent'
 ]

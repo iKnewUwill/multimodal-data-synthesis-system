@@ -51,23 +51,21 @@ class SystemSettings(BaseModel):
     # 日志级别
     LOG_LEVEL: str = Field(default="INFO", description="日志级别")
     
-    # 最大迭代次数
-    MAX_ITERATIONS: int = Field(default=10, description="最大迭代次数")
-    
-    # 温度参数（每次迭代增加的难度）
-    DIFFICULTY_INCREMENT: float = Field(default=0.1, description="难度递增步长")
-    
-    # 初始难度
-    INITIAL_DIFFICULTY: float = Field(default=0.3, description="初始难度等级（0-1）")
-    
-    # 最大难度
-    MAX_DIFFICULTY: float = Field(default=1.0, description="最大难度等级")
+    # 最大迭代次数（每个任务的提问数量）
+    MAX_ITERATIONS: int = Field(default=5, description="每个任务生成的问题数量（每个问题包含1标准答案+1正样本+1负样本+N策略样本）")
+
+    # 难度范围（随机难度）
+    MIN_DIFFICULTY: float = Field(default=0.1, description="随机难度下限")
+    MAX_DIFFICULTY: float = Field(default=1.0, description="随机难度上限")
     
     # 验证通过阈值
     VALIDATION_THRESHOLD: float = Field(default=0.8, description="验证通过的语义相似度阈值")
     
     # 负样本生成比例
-    NEGATIVE_SAMPLE_RATIO: float = Field(default=0.3, ge=0.0, le=1.0, description="负样本生成比例（0-1之间，默认0.3表示30%的样本为负样本）")
+    NEGATIVE_SAMPLE_RATIO: float = Field(default=0.5, ge=0.0, le=1.0, description="负样本生成比例（0-1之间，默认0.5表示50%的样本为负样本）")
+
+    # 策略模型采样配置
+    STRATEGY_SAMPLE_COUNT: int = Field(default=3, ge=1, le=10, description="策略模型(qwen3-8b)每个问题的采样次数")
 
     # Execution & Performance Settings
     PARALLEL_TASK_COUNT: int = Field(

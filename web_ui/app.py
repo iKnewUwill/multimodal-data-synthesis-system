@@ -5,7 +5,7 @@ from queue import Queue
 import threading
 
 from src.task_manager import TaskManager
-from config.llm_config import get_llm_config
+from config.llm_config import get_llm_config, get_strategy_llm_config
 from config.prompts import get_prompts_config
 from web_ui.styles import CUSTOM_CSS
 from web_ui.components import UIComponents
@@ -14,42 +14,43 @@ from web_ui.handlers import UIHandlers
 
 class MultimodalSynthesisUI:
     """Main UI class - orchestrates components and handlers"""
-    
+
     def __init__(self):
         self.task_manager = TaskManager()
         self.log_queue = Queue()
         self.log_lock = threading.Lock()
         self.llm_config = get_llm_config()
+        self.strategy_llm_config = get_strategy_llm_config()
         self.prompts_config = get_prompts_config()
         self.handlers = UIHandlers(self.task_manager, self.log_queue, self.log_lock)
-    
+
     def create_interface(self):
         """Assemble interface from components + wire handlers"""
         with gr.Blocks(title="金融财务数据合成系统", css=CUSTOM_CSS) as interface:
             # Header
             gr.HTML("""
             <div class="header">
-                <h1>🤖 金融财务数据合成系统</h1>
-                <p>基于 Multi-Agent 的高质量金融财务分析训练数据合成平台</p>
+                <h1>金融财务数据合成系统</h1>
+                <p>基于双模型架构（qwen3.7-max + qwen3-8b）的高质量金融财务分析训练数据合成平台</p>
             </div>
             """)
-            
+
             with gr.Tabs():
                 # Tab 1: Batch Processing
                 with gr.Tab("📊 批量任务处理"):
                     batch_inputs, batch_outputs = UIComponents.build_batch_tab()
                     self._wire_batch_handlers(batch_inputs, batch_outputs)
-                
+
                 # Tab 2: LLM Config
                 with gr.Tab("🔧 LLM 配置"):
-                    llm_inputs = UIComponents.build_llm_config_tab(self.llm_config)
+                    llm_inputs = UIComponents.build_llm_config_tab(self.llm_config, self.strategy_llm_config)
                     self._wire_llm_config_handlers(llm_inputs)
-                
+
                 # Tab 3: Prompts Config
                 with gr.Tab("📝 Prompt 配置"):
                     prompts_inputs = UIComponents.build_prompts_config_tab(self.prompts_config)
                     self._wire_prompts_config_handlers(prompts_inputs)
-            
+
             # Auto-load historical tasks on interface load
             interface.load(
                 fn=self.handlers.refresh_task_list,
@@ -63,9 +64,9 @@ class MultimodalSynthesisUI:
                     batch_outputs['load_status']
                 ]
             )
-        
+
         return interface
-    
+
     def _wire_batch_handlers(self, inputs, outputs):
         """Connect batch processing handlers to components"""
         # File upload
@@ -83,7 +84,7 @@ class MultimodalSynthesisUI:
                 outputs['task_dataframe']
             ]
         )
-        
+
         # Refresh button
         inputs['refresh_btn'].click(
             fn=self.handlers.refresh_task_list,
@@ -97,7 +98,7 @@ class MultimodalSynthesisUI:
                 outputs['load_status']
             ]
         )
-        
+
         # Start button
         inputs['start_btn'].click(
             fn=self.handlers.start_batch_processing,
@@ -114,27 +115,34 @@ class MultimodalSynthesisUI:
                 outputs['status_text']
             ]
         )
-        
+
         # Stop button
         inputs['stop_btn'].click(
             fn=self.handlers.stop_processing,
             outputs=[outputs['stop_status']]
         )
-        
+
         # Negative sample ratio slider change
         inputs['negative_sample_ratio'].change(
             fn=self.handlers.update_negative_sample_ratio,
             inputs=[inputs['negative_sample_ratio']],
             outputs=[outputs['load_status']]
         )
-        
-        # DataFrame selection - direct click interaction
+
+        # Strategy sample count slider change
+        inputs['strategy_sample_count'].change(
+            fn=self.handlers.update_strategy_sample_count,
+            inputs=[inputs['strategy_sample_count']],
+            outputs=[outputs['load_status']]
+        )
+
+        # DataFrame selection
         outputs['task_dataframe'].select(
             fn=self.handlers.handle_dataframe_selection,
             inputs=[outputs['task_dataframe']],
             outputs=[outputs['task_detail_display']]
         )
-    
+
     def _wire_llm_config_handlers(self, inputs):
         """Connect LLM config handlers"""
         inputs['save_llm_config_btn'].click(
@@ -143,12 +151,24 @@ class MultimodalSynthesisUI:
                 inputs['api_key_input'],
                 inputs['base_url_input'],
                 inputs['model_name_input'],
-                inputs['temperature_input'],
-                inputs['max_tokens_input']
+                inputs['proposer_temp'],
+                inputs['proposer_max_tok'],
+                inputs['pos_solver_temp'],
+                inputs['pos_solver_max_tok'],
+                inputs['neg_solver_temp'],
+                inputs['neg_solver_max_tok'],
+                inputs['validator_temp'],
+                inputs['validator_max_tok'],
+                inputs['strategy_api_key'],
+                inputs['strategy_base_url'],
+                inputs['strategy_model_name'],
+                inputs['strategy_temp'],
+                inputs['strategy_max_tok'],
+                inputs['strategy_enable_thinking']
             ],
             outputs=[inputs['llm_config_status']]
         )
-    
+
     def _wire_prompts_config_handlers(self, inputs):
         """Connect prompts config handlers"""
         inputs['save_prompts_btn'].click(
@@ -163,7 +183,11 @@ class MultimodalSynthesisUI:
                 inputs['validator_system'],
                 inputs['validator_user'],
                 inputs['neg_validator_system'],
-                inputs['neg_validator_user']
+                inputs['neg_validator_user'],
+                inputs['sampling_system'],
+                inputs['sampling_user'],
+                inputs['sampling_val_system'],
+                inputs['sampling_val_user']
             ],
             outputs=[inputs['prompts_status']]
         )

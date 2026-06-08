@@ -75,11 +75,9 @@ class DatabaseManager:
                     评估维度 TEXT NOT NULL,
                     financial_data TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    qa_pairs TEXT NOT NULL,
-                    total_iterations INTEGER DEFAULT 0,
+                    sample_sets TEXT NOT NULL,
                     valid_qa_count INTEGER DEFAULT 0,
                     completed_at TEXT,
-                    output_path TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
                 )
@@ -288,26 +286,26 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         try:
-            # 将 QA pairs 转换为 JSON
-            qa_pairs_json = json.dumps([qa.model_dump(mode='json') for qa in result.qa_pairs], ensure_ascii=False)
-            
+            # 将 sample_sets 转换为 JSON
+            sample_sets_json = json.dumps(
+                [ss.model_dump(mode='json') for ss in result.sample_sets], ensure_ascii=False
+            )
+
             cursor.execute("""
                 INSERT INTO results (
                     task_id, 证券代码, 公司名称, 评估维度, financial_data, status,
-                    qa_pairs, total_iterations, valid_qa_count, completed_at, output_path, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sample_sets, valid_qa_count, completed_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 result.task_id,
                 result.证券代码,
                 result.公司名称,
                 result.评估维度,
-                result.financial_data,
+                json.dumps(result.financial_data, ensure_ascii=False),
                 result.status.value,
-                qa_pairs_json,
-                result.total_iterations,
+                sample_sets_json,
                 result.valid_qa_count,
                 result.completed_at.isoformat() if result.completed_at else None,
-                result.output_path,
                 datetime.now().isoformat()
             ))
             
@@ -325,7 +323,7 @@ class DatabaseManager:
     
     def get_result(self, task_id: str) -> Optional[FinancialTaskResult]:
         """从数据库获取任务结果"""
-        from src.models import FinancialQAResult
+        from src.models import QuestionSampleSet
         
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -333,26 +331,24 @@ class DatabaseManager:
         try:
             cursor.execute("""
                 SELECT task_id, 证券代码, 公司名称, 评估维度, status,
-                       qa_pairs, total_iterations, valid_qa_count, completed_at, output_path
+                       sample_sets, valid_qa_count, completed_at
                 FROM results WHERE task_id = ?
             """, (task_id,))
-            
+
             row = cursor.fetchone()
             if row:
-                # 解析 QA pairs JSON
-                qa_pairs_data = json.loads(row[5])
-                qa_pairs = [FinancialQAResult(**qa) for qa in qa_pairs_data]
-                
+                sample_sets_data = json.loads(row[5])
+                sample_sets = [QuestionSampleSet(**ss) for ss in sample_sets_data]
+
                 return FinancialTaskResult(
                     task_id=row[0],
                     证券代码=row[1],
                     公司名称=row[2],
                     评估维度=row[3],
                     status=TaskStatus(row[4]),
-                    qa_pairs=qa_pairs,
-                    total_iterations=row[6],
-                    valid_qa_count=row[7],
-                    completed_at=datetime.fromisoformat(row[8]) if row[8] else None
+                    sample_sets=sample_sets,
+                    valid_qa_count=row[6],
+                    completed_at=datetime.fromisoformat(row[7]) if row[7] else None
                 )
             return None
             

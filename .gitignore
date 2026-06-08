@@ -10,12 +10,14 @@ ENV/
 
 # 环境变量
 .env
+env
 
 # 数据文件
 data/uploads/*
 data/outputs/*
 !data/uploads/.gitkeep
 !data/outputs/.gitkeep
+data/
 
 # 日志
 logs/

@@ -61,14 +61,7 @@ class TestMultimodalSynthesisUI:
             status=TaskStatus.COMPLETED,
             completed_at=datetime.now(),
             valid_qa_count=5,
-            total_iterations=10,
-            qa_pairs=[
-                {
-                    "question": "测试问题",
-                    "answer": "测试答案",
-                    "metrics": {"relevance": 0.9, "clarity": 0.8}
-                }
-            ]
+            sample_sets=[]
         )
         return result
 

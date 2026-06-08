@@ -10,19 +10,6 @@ import uuid
 class TaskType(str, Enum):
     """任务类型枚举"""
     FINANCIAL_QA = "金融财务问答"
-    # 以下为图片类任务（暂时注释，保留向后兼容）
-    # IMAGE_DESCRIPTION = "图片描述类"
-    # IMAGE_QA = "图片问答类"
-    # MULTI_IMAGE_COMPARISON = "多图比较类"
-    # VISUAL_REASONING = "视觉推理类"
-    # DETAIL_RECOGNITION = "细节识别类"
-    # SCENE_UNDERSTANDING = "场景理解类"
-    # TEXT_RECOGNITION = "文字识别类"
-    # COUNTING = "计数统计类"
-    # DOCUMENT_QA = "文档问答类"
-    # DATA_ANALYSIS = "数据分析类"
-    # TEXT_SUMMARY = "文本摘要类"
-    # CUSTOM = "自定义"
 
 
 class FileType(str, Enum):
@@ -77,13 +64,13 @@ class FinancialTaskInput(BaseModel):
 
 
 class QAPair(BaseModel):
-    """问答对"""
+    """问答对（保持向后兼容）"""
     question: str = Field(..., description="问题")
     answer: str = Field(..., description="答案")
     difficulty: float = Field(..., ge=0.0, le=1.0, description="难度等级")
     iteration: int = Field(..., ge=1, description="所属迭代轮次")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
-    
+
     class Config:
         json_encoders = {
             datetime: lambda v: v.isoformat()
@@ -91,27 +78,15 @@ class QAPair(BaseModel):
 
 
 class FinancialQAResult(BaseModel):
-    """金融财务问答结果"""
+    """金融财务问答结果（保持向后兼容）"""
     question: str = Field(..., description="问题")
     analysis_process: Dict[str, Any] = Field(..., description="分析过程")
     conclusion: str = Field(..., description="分析结论")
     difficulty: float = Field(..., ge=0.0, le=1.0)
     iteration: int
     is_positive_sample: bool = Field(default=True, description="是否为正样本")
+    sample_source: str = Field(default="positive_solver", description="样本来源：positive_solver/negative_solver/strategy_model")
     created_at: datetime = Field(default_factory=datetime.now)
-
-class FinancialTaskResult(BaseModel):
-    """金融财务任务结果"""
-    task_id: str
-    证券代码: str
-    公司名称: str
-    评估维度: str
-    financial_data: Dict[str, Any]
-    status: TaskStatus
-    qa_pairs: List[FinancialQAResult] = Field(default_factory=list)
-    total_iterations: int = 0
-    valid_qa_count: int = 0
-    completed_at: Optional[datetime] = None
 
 
 class ValidationResult(BaseModel):
@@ -122,7 +97,7 @@ class ValidationResult(BaseModel):
 
 
 class ProposerOutput(BaseModel):
-    """提议者输出 - 金融财务分析"""
+    """提议者输出 - 问题 + 标准答案"""
     question: str = Field(..., description="生成的问题")
     answer: str = Field(..., description="参考答案/结论")
     analysis_process: Dict[str, str] = Field(default_factory=dict, description="分析过程（分步骤）")
@@ -135,15 +110,77 @@ class SolverOutput(BaseModel):
     analysis_process: Dict[str, str] = Field(default_factory=dict, description="分析过程（分步骤）")
     conclusion: str = Field(default="", description="分析结论")
 
+
+class StrategySampleResult(BaseModel):
+    """策略模型采样结果 - qwen3-8b 单次自然推理输出"""
+    sample_index: int = Field(..., description="采样序号（1-based）")
+    solver_output: SolverOutput = Field(..., description="策略模型推理输出")
+    validation: Optional[ValidationResult] = Field(None, description="采样验证结果")
+    is_valid: bool = Field(default=False, description="是否被标注为正样本")
+
+
+# === 新输出结构 ===
+
+class SampleWithValidation(BaseModel):
+    """单个带验证的样本"""
+    sample_source: str = Field(..., description="样本来源：positive_solver / negative_solver / strategy_model")
+    is_positive_sample: bool = Field(..., description="是否为正样本")
+    conclusion: str = Field(default="", description="分析结论")
+    analysis_process: Dict[str, str] = Field(default_factory=dict, description="分析过程")
+    validation: Optional[ValidationResult] = Field(None, description="验证结果")
+    sample_index: int = Field(default=1, description="采样序号（策略样本用）")
+
+
+class QuestionSampleSet(BaseModel):
+    """一个问题对应的完整样本集
+
+    结构：1个标准答案 + 1个正样本 + 1个负样本 + N个策略模型样本
+    """
+    difficulty: float = Field(..., description="随机难度等级")
+    question: str = Field(..., description="分析问题")
+    # 标准答案（由 Proposer 与问题一同生成）
+    standard_answer: str = Field(..., description="标准答案结论")
+    standard_analysis_process: Dict[str, str] = Field(default_factory=dict, description="标准答案分析过程")
+    # 正样本（qwen3.7-max 求解者）
+    positive_sample: Optional[SampleWithValidation] = Field(None, description="正样本")
+    # 负样本（qwen3.7-max 负样本求解者·错误注入）
+    negative_sample: Optional[SampleWithValidation] = Field(None, description="负样本")
+    # 策略模型样本（qwen3-8b 自然推理）
+    strategy_samples: List[SampleWithValidation] = Field(default_factory=list, description="策略模型采样结果")
+
+
+class FinancialTaskResult(BaseModel):
+    """金融财务任务结果"""
+    task_id: str
+    证券代码: str
+    公司名称: str
+    评估维度: str
+    financial_data: Dict[str, Any]
+    status: TaskStatus
+    # 新结构：每个问题一个 QuestionSampleSet
+    sample_sets: List[QuestionSampleSet] = Field(default_factory=list, description="每个问题的样本集")
+    valid_qa_count: int = 0
+    completed_at: Optional[datetime] = None
+
+
 class IterationState(BaseModel):
     """迭代状态"""
     iteration: int = Field(..., description="当前迭代轮次")
-    difficulty: float = Field(..., description="当前难度等级")
+    difficulty: float = Field(..., description="随机难度等级")
+    proposed_qa: Optional[ProposerOutput] = Field(None, description="提议的问答对（问题+标准答案）")
+    # 正样本求解者输出（qwen3.7-max）
+    positive_solved_output: Optional[SolverOutput] = Field(None, description="正样本求解者的输出")
+    positive_validation: Optional[ValidationResult] = Field(None, description="正样本验证结果")
+    # 负样本求解者输出（qwen3.7-max）
+    negative_solved_output: Optional[SolverOutput] = Field(None, description="负样本求解者的输出")
+    negative_validation: Optional[ValidationResult] = Field(None, description="负样本验证结果")
+    # 策略模型采样结果（qwen3-8b，多次采样）
+    strategy_samples: list = Field(default_factory=list, description="策略模型采样结果列表")
+    # 向后兼容
+    solved_output: Optional[SolverOutput] = Field(None, description="求解的输出（向后兼容）")
+    validation: Optional[ValidationResult] = Field(None, description="验证结果（向后兼容）")
     is_positive_sample: bool = Field(default=True, description="是否为正样本")
-    proposed_qa: Optional[ProposerOutput] = Field(None, description="提议的问答对")
-    solved_output: Optional[SolverOutput] = Field(None, description="求解的输出")
-    validation: Optional[ValidationResult] = Field(None, description="验证结果")
-    status: str = Field(default="pending", description="状态：pending/proposing/solving/validating/completed/failed")
+    status: str = Field(default="pending", description="状态")
     error: Optional[str] = Field(None, description="错误信息")
 
 
@@ -152,13 +189,11 @@ class SynthesisTask(BaseModel):
     task_id: str = Field(..., description="任务ID")
     task_type: str = Field(..., description="任务类型")
     task_description: Optional[str] = Field(None, description="任务描述")
-    max_iterations: int = Field(default=10, description="最大迭代次数")
-    initial_difficulty: float = Field(default=0.3, description="初始难度")
-    difficulty_increment: float = Field(default=0.1, description="难度递增")
-    is_positive_sample: bool = Field(default=True, description="是否为正样本（True=正样本, False=负样本/错误注入）")
+    max_iterations: int = Field(default=5, description="生成的问题数量")
+    is_positive_sample: bool = Field(default=True, description="是否为正样本")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
-    
-    # 金融财务相关字段（可选，用于向后兼容）
+
+    # 金融财务相关字段
     证券代码: Optional[str] = Field(None, description="证券代码")
     公司名称: Optional[str] = Field(None, description="公司名称")
     评估维度: Optional[str] = Field(None, description="评估维度")
@@ -171,7 +206,7 @@ class SynthesisTask(BaseModel):
 
 
 class SynthesisResult(BaseModel):
-    """合成结果"""
+    """合成结果（向后兼容）"""
     task_id: str = Field(..., description="任务ID")
     task_type: str = Field(..., description="任务类型")
     qa_pairs: List[QAPair] = Field(default_factory=list, description="生成的问答对")
@@ -179,7 +214,7 @@ class SynthesisResult(BaseModel):
     total_iterations: int = Field(default=0, description="总迭代次数")
     valid_qa_count: int = Field(default=0, description="有效问答对数量")
     completed_at: Optional[datetime] = Field(None, description="完成时间")
-    
+
     class Config:
         json_encoders = {
             datetime: lambda v: v.isoformat()
@@ -191,13 +226,16 @@ class AgentState(BaseModel):
     # 任务信息
     task: SynthesisTask
 
-    # 历史问答对（已验证通过的）- 支持两种类型
+    # 收集结果（新结构）
+    sample_sets: List[QuestionSampleSet] = Field(default_factory=list)
+
+    # 历史问答对（向后兼容）
     history_qa_pairs: List[Any] = Field(default_factory=list)
 
     # 当前迭代
     current_iteration: int = Field(default=0)
 
-    # 当前难度
+    # 当前难度（随机）
     current_difficulty: float = Field(default=0.3)
 
     # 当前迭代状态

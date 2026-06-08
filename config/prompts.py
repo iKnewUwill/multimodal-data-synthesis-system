@@ -25,12 +25,12 @@ class PromptsConfig(BaseModel):
 - 具备结构性风险识别能力（债务结构、期限匹配、行业风险等）
 
 任务类型：{task_type}
-当前难度等级：{difficulty_level}（0-1之间，越高越难）
+当前难度等级：{difficulty_level}（0-1之间，随机指定）
 
-难度递增策略：
+设计问题时应匹配难度等级：
 - 难度0.1-0.3：单一指标分析、基础财务比率计算
-- 难度0.4-0.6：多指标综合分析、趋势判断、同行业对比
-- 难度0.7-0.9：深度风险识别、跨期分析、异常情况诊断
+- 难度0.4-0.6：多指标综合分析、趋势判断
+- 难度0.7-0.9：深度风险识别、跨期分析、异常诊断
 - 难度0.9-1.0：复杂综合评估、预警信号识别、决策建议
 
 {task_description}
@@ -50,31 +50,28 @@ class PromptsConfig(BaseModel):
 
 关键要求：
 - 问题必须基于提供的财务数据（证券代码、公司名称、评估维度、financial_data等字段）
-- 分析过程需要清晰展示推理步骤
+- 分析过程需要清晰展示推理步骤（至少3步）
 - 结论应该明确、可验证
-- 如果提供了历史问答对，新问题应该更难、更有深度
-- 避免重复已有的问题类型和分析角度
+- 问题难度应与指定的难度等级匹配
 
 不要在 JSON 前后添加任何其他文本或说明。""",
         description="提议者系统 Prompt"
     )
     
     proposer_user_prompt: str = Field(
-        default="""请基于以下财务数据生成新的分析问答对：
+        default="""请基于以下财务数据生成一个财务分析问答对：
 
 任务类型：{task_type}
 当前难度等级：{difficulty_level}
-
-{history_context}
 
 财务数据上下文：
 - 可用字段包括：证券代码、公司名称、评估维度、financial_data、财务比率、现金流数据等
 - 需要关注的核心维度：偿债能力、现金流状况、盈利能力、运营效率、结构性风险
 
-请生成一个新的、更具挑战性的财务分析问答对。确保：
-1. 问题难度高于历史问题（如果有）
-2. 分析角度新颖，具有实际业务价值
-3. 推理过程逻辑清晰，步骤完整
+请生成一个财务分析问答对。确保：
+1. 问题难度与指定的难度等级匹配
+2. 分析角度具有实际业务价值
+3. 推理过程逻辑清晰，步骤完整（至少3步）
 4. 结论基于数据分析，准确可靠
 
 【必须】严格按照以下 JSON 格式返回，不要添加任何额外的文本：
@@ -384,6 +381,117 @@ class PromptsConfig(BaseModel):
         description="负样本验证者用户 Prompt"
     )
 
+    # 策略模型采样 Prompt（qwen3-8b 专用，无错误注入引导）
+    sampling_system_prompt: str = Field(
+        default="""你是一位金融分析师，请基于提供的财务数据，对给定问题进行分步推理分析。
+
+请展示你的完整推理过程，包括：
+- 分析步骤和逻辑
+- 使用的财务数据
+- 最终结论
+
+【必须】严格按照以下 JSON 格式返回：
+```json
+{
+  "分析过程": {
+    "步骤1": "第一步推理分析",
+    "步骤2": "第二步推理分析",
+    "步骤3": "第三步推理分析"
+  },
+  "分析结论": "你的最终结论"
+}
+```
+
+不要在 JSON 前后添加任何其他文本或说明。""",
+        description="策略模型采样系统 Prompt"
+    )
+
+    sampling_user_prompt: str = Field(
+        default="""请分析以下财务问题：
+
+问题：{question}
+
+请展示你的完整推理过程。
+
+【必须】严格按照以下 JSON 格式返回，不要添加任何额外的文本：
+```json
+{{
+  "分析过程": {{
+    "步骤1": "第一步推理",
+    "步骤2": "第二步推理",
+    "步骤3": "第三步推理"
+  }},
+  "分析结论": "基于分析的结论"
+}}
+```""",
+        description="策略模型采样用户 Prompt"
+    )
+
+    # 策略模型采样验证者 Prompt（qwen3.7-max 用于标注8B采样结果）
+    sampling_validator_system_prompt: str = Field(
+        default="""你是一位专业的金融分析质量保证专家，负责验证策略模型(qwen3-8b)生成的推理答案的质量。
+
+你的核心职责：
+1. 比较参考答案和策略模型生成的预测答案的分析过程和结论
+2. 判断预测答案是否正确——即答案与参考答案在语义和逻辑上是否一致
+3. 标注该样本为正样本（正确推理）或负样本（错误推理）
+
+验证标准：
+- **核心结论一致性**：最终结论在语义上是否与参考答案一致
+- **推理逻辑正确性**：分析步骤是否符合财务逻辑
+- **数据使用准确性**：是否正确使用财务数据
+- **完整性**：是否涵盖了问题的关键方面
+
+标注规则：
+- is_valid = true：预测答案正确，可作为正样本使用
+- is_valid = false：预测答案有误，但这是策略模型的真实错误，可作为高质量负样本
+
+【重要】你的响应必须是有效的 JSON 格式，包含以下字段：
+```json
+{
+  "is_valid": true或false,
+  "similarity_score": 0.0到1.0之间的分数,
+  "reason": "详细的验证理由，包括标注依据"
+}
+```
+
+不要在 JSON 前后添加任何其他文本或说明。""",
+        description="策略模型采样验证者系统 Prompt"
+    )
+
+    sampling_validator_user_prompt: str = Field(
+        default="""请验证以下策略模型(qwen3-8b)生成的推理答案：
+
+问题：{question}
+
+参考答案（qwen3.7-max生成）：
+{reference_answer}
+
+策略模型预测答案（qwen3-8b生成）：
+{predicted_answer}
+
+验证要求：
+1. 比较策略模型答案与参考答案的核心结论是否一致
+2. 评估推理逻辑是否正确
+3. 标注该样本为正样本(is_valid=true)或负样本(is_valid=false)
+
+重点关注：
+- 核心结论是否与参考答案一致
+- 推理逻辑是否有明显错误
+- 财务分析方法是否正确
+- 这是策略模型的自然输出，对错都真实反映了模型能力
+
+【必须】严格按照以下 JSON 格式返回，不要添加任何额外的文本：
+```json
+{{
+  "is_valid": true或false,
+  "similarity_score": 0.0-1.0,
+  "reason": "验证理由和标注依据"
+}}
+```""",
+        description="策略模型采样验证者用户 Prompt"
+    )
+
     # 任务类型描述
     task_descriptions: Dict[str, str] = Field(
         default={
@@ -426,35 +534,20 @@ class PromptsConfig(BaseModel):
         difficulty_level: float,
         history_qa_pairs: list | None = None
     ) -> tuple[str, str]:
-        """格式化提议者 Prompt"""
+        """格式化提议者 Prompt（每个问题独立，不传递历史）"""
         task_description = self.get_task_description(task_type)
-        
-        # 构建历史上下文
-        history_context = ""
-        if history_qa_pairs:
-            history_context = "历史问答对（请生成比这些更难、更有深度的问题）：\n\n"
-            for i, qa in enumerate(history_qa_pairs, 1):
-                history_context += f"问题 {i}：{qa.get('question', qa.get('问题', 'N/A'))}\n"
-                if 'answer' in qa:
-                    history_context += f"答案 {i}：{qa['answer']}\n"
-                elif '分析结论' in qa:
-                    history_context += f"结论 {i}：{qa['分析结论']}\n"
-                history_context += "\n"
-        else:
-            history_context = "这是第一个问题，请从基础财务分析开始。\n"
-        
+
         system_prompt = self.proposer_system_prompt.format(
             task_type=task_type,
             difficulty_level=difficulty_level,
             task_description=task_description
         )
-        
+
         user_prompt = self.proposer_user_prompt.format(
             task_type=task_type,
-            difficulty_level=difficulty_level,
-            history_context=history_context
+            difficulty_level=difficulty_level
         )
-        
+
         return system_prompt, user_prompt
     
     def format_solver_prompt(self, question: str) -> tuple[str, str]:
@@ -493,6 +586,27 @@ class PromptsConfig(BaseModel):
         """格式化负样本验证者 Prompt"""
         system_prompt = self.negative_validator_system_prompt
         user_prompt = self.negative_validator_user_prompt.format(
+            question=question,
+            reference_answer=reference_answer,
+            predicted_answer=predicted_answer
+        )
+        return system_prompt, user_prompt
+
+    def format_sampling_prompt(self, question: str) -> tuple[str, str]:
+        """格式化策略模型采样 Prompt（qwen3-8b专用）"""
+        system_prompt = self.sampling_system_prompt
+        user_prompt = self.sampling_user_prompt.format(question=question)
+        return system_prompt, user_prompt
+
+    def format_sampling_validator_prompt(
+        self,
+        question: str,
+        reference_answer: str,
+        predicted_answer: str
+    ) -> tuple[str, str]:
+        """格式化策略模型采样验证者 Prompt"""
+        system_prompt = self.sampling_validator_system_prompt
+        user_prompt = self.sampling_validator_user_prompt.format(
             question=question,
             reference_answer=reference_answer,
             predicted_answer=predicted_answer
