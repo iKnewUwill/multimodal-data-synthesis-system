@@ -136,38 +136,47 @@ class ProposerAgent:
         """基于金融数据生成新的问答对"""
         logger.info(f"提议者开始生成问答对 - 难度: {difficulty}")
 
-        try:
-            system_prompt, user_prompt = self.prompts_config.format_proposer_prompt(
-                task_type=task_type or "金融财务问答",
-                difficulty_level=difficulty,
-                history_qa_pairs=[qa.model_dump() for qa in history_qa_pairs] if history_qa_pairs else None
-            )
+        last_error = None
+        max_retries = settings.MAX_RETRIES
 
-            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+        for attempt in range(max_retries):
+            try:
+                system_prompt, user_prompt = self.prompts_config.format_proposer_prompt(
+                    task_type=task_type or "金融财务问答",
+                    difficulty_level=difficulty,
+                    history_qa_pairs=[qa.model_dump() for qa in history_qa_pairs] if history_qa_pairs else None
+                )
 
-            response = self.llm_client.call_with_financial_data(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                financial_data_str=financial_data_str,
-                temperature=llm_config.proposer_temperature,
-                max_tokens=llm_config.proposer_max_tokens
-            )
+                financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
 
-            result = extract_json_from_text(response)
+                response = self.llm_client.call_with_financial_data(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    financial_data_str=financial_data_str,
+                    temperature=llm_config.proposer_temperature,
+                    max_tokens=llm_config.proposer_max_tokens
+                )
 
-            output = ProposerOutput(
-                question=result.get("问题", result.get("question", "")),
-                answer=result.get("分析结论", result.get("answer", "")),
-                analysis_process=result["分析过程"],
-                conclusion=result["分析结论"]
-            )
+                result = extract_json_from_text(response)
 
-            logger.info(f"提议者生成问题: {output.question[:50]}...")
-            return output
+                output = ProposerOutput(
+                    question=result.get("问题", result.get("question", "")),
+                    answer=result.get("分析结论", result.get("answer", "")),
+                    analysis_process=result["分析过程"],
+                    conclusion=result["分析结论"]
+                )
 
-        except Exception as e:
-            logger.error(f"提议者执行失败: {str(e)}")
-            raise
+                logger.info(f"提议者生成问题 (尝试 {attempt + 1}/{max_retries}): {output.question[:50]}...")
+                return output
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"提议者第 {attempt + 1}/{max_retries} 次失败: {str(e)[:100]}")
+                if attempt < max_retries - 1:
+                    continue
+
+        logger.error(f"提议者 {max_retries} 次尝试全部失败: {str(last_error)}")
+        raise last_error
 
 
 class SolverAgent:
@@ -177,6 +186,61 @@ class SolverAgent:
         self.llm_client = llm_client
         self.prompts_config = prompts_config
 
+    def _solve_core(
+        self,
+        financial_data: Optional[Dict[str, Any]],
+        question: str,
+        is_positive: bool
+    ) -> SolverOutput:
+        """求解核心逻辑，含 5 次重试"""
+        last_error = None
+        max_retries = settings.MAX_RETRIES
+
+        for attempt in range(max_retries):
+            try:
+                if is_positive:
+                    system_prompt, user_prompt = self.prompts_config.format_solver_prompt(
+                        question=question
+                    )
+                    temperature = llm_config.positive_solver_temperature
+                    max_tokens = llm_config.positive_solver_max_tokens
+                else:
+                    system_prompt, user_prompt = self.prompts_config.format_negative_solver_prompt(
+                        question=question
+                    )
+                    temperature = llm_config.negative_solver_temperature
+                    max_tokens = llm_config.negative_solver_max_tokens
+
+                financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+
+                response = self.llm_client.call_with_financial_data(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    financial_data_str=financial_data_str,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+
+                result = extract_json_from_text(response)
+
+                output = SolverOutput(
+                    answer=result.get("分析结论", result.get("answer", "")),
+                    analysis_process=result["分析过程"],
+                    conclusion=result["分析结论"]
+                )
+
+                logger.info(f"{'正' if is_positive else '负'}样本求解者生成答案 (尝试 {attempt + 1}/{max_retries}): {output.answer[:50]}...")
+                return output
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"{'正' if is_positive else '负'}样本求解者第 {attempt + 1}/{max_retries} 次失败: {str(e)[:100]}")
+                if attempt < max_retries - 1:
+                    continue
+
+        logger.error(f"{'正' if is_positive else '负'}样本求解者 {max_retries} 次尝试全部失败: {str(last_error)}")
+        raise last_error
+
     def solve(
         self,
         financial_data: Optional[Dict[str, Any]] = None,
@@ -184,36 +248,7 @@ class SolverAgent:
     ) -> SolverOutput:
         """正样本求解 - 基于金融数据生成正确答案"""
         logger.info(f"正样本求解者开始回答问题: {question[:50] if question else 'N/A'}...")
-
-        try:
-            system_prompt, user_prompt = self.prompts_config.format_solver_prompt(
-                question=question or ""
-            )
-
-            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
-
-            response = self.llm_client.call_with_financial_data(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                financial_data_str=financial_data_str,
-                temperature=llm_config.positive_solver_temperature,
-                max_tokens=llm_config.positive_solver_max_tokens
-            )
-
-            result = extract_json_from_text(response)
-
-            output = SolverOutput(
-                answer=result.get("分析结论", result.get("answer", "")),
-                analysis_process=result["分析过程"],
-                conclusion=result["分析结论"]
-            )
-
-            logger.info(f"正样本求解者生成答案: {output.answer[:50]}...")
-            return output
-
-        except Exception as e:
-            logger.error(f"正样本求解者执行失败: {str(e)}")
-            raise
+        return self._solve_core(financial_data, question or "", is_positive=True)
 
     def solve_negative(
         self,
@@ -222,36 +257,7 @@ class SolverAgent:
     ) -> SolverOutput:
         """负样本求解 - 基于金融数据生成包含错误的答案"""
         logger.info(f"负样本求解者开始回答问题: {question[:50] if question else 'N/A'}...")
-
-        try:
-            system_prompt, user_prompt = self.prompts_config.format_negative_solver_prompt(
-                question=question or ""
-            )
-
-            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
-
-            response = self.llm_client.call_with_financial_data(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                financial_data_str=financial_data_str,
-                temperature=llm_config.negative_solver_temperature,
-                max_tokens=llm_config.negative_solver_max_tokens
-            )
-
-            result = extract_json_from_text(response)
-
-            output = SolverOutput(
-                answer=result.get("分析结论", result.get("answer", "")),
-                analysis_process=result["分析过程"],
-                conclusion=result["分析结论"]
-            )
-
-            logger.info(f"负样本求解者生成答案: {output.answer[:50]}...")
-            return output
-
-        except Exception as e:
-            logger.error(f"负样本求解者执行失败: {str(e)}")
-            raise
+        return self._solve_core(financial_data, question or "", is_positive=False)
 
 
 class StrategyModelSampler:
@@ -270,35 +276,44 @@ class StrategyModelSampler:
         """策略模型自然推理采样"""
         logger.info(f"策略模型采样 #{sample_index}: {question[:50] if question else 'N/A'}...")
 
-        try:
-            system_prompt, user_prompt = self.prompts_config.format_sampling_prompt(
-                question=question or ""
-            )
+        last_error = None
+        max_retries = settings.MAX_RETRIES
 
-            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+        for attempt in range(max_retries):
+            try:
+                system_prompt, user_prompt = self.prompts_config.format_sampling_prompt(
+                    question=question or ""
+                )
 
-            response = self.strategy_client.call_with_financial_data(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                financial_data_str=financial_data_str,
-                temperature=strategy_llm_config.temperature,
-                max_tokens=strategy_llm_config.max_tokens
-            )
+                financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
 
-            result = extract_json_from_text(response)
+                response = self.strategy_client.call_with_financial_data(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    financial_data_str=financial_data_str,
+                    temperature=strategy_llm_config.temperature,
+                    max_tokens=strategy_llm_config.max_tokens
+                )
 
-            output = SolverOutput(
-                answer=result.get("分析结论", result.get("answer", "")),
-                analysis_process=result["分析过程"],
-                conclusion=result["分析结论"]
-            )
+                result = extract_json_from_text(response)
 
-            logger.info(f"策略模型采样 #{sample_index} 完成: {output.answer[:50]}...")
-            return output
+                output = SolverOutput(
+                    answer=result.get("分析结论", result.get("answer", "")),
+                    analysis_process=result["分析过程"],
+                    conclusion=result["分析结论"]
+                )
 
-        except Exception as e:
-            logger.error(f"策略模型采样 #{sample_index} 失败: {str(e)}")
-            raise
+                logger.info(f"策略模型采样 #{sample_index} 完成 (尝试 {attempt + 1}/{max_retries}): {output.answer[:50]}...")
+                return output
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"策略模型采样 #{sample_index} 第 {attempt + 1}/{max_retries} 次失败: {str(e)[:100]}")
+                if attempt < max_retries - 1:
+                    continue
+
+        logger.error(f"策略模型采样 #{sample_index} {max_retries} 次尝试全部失败: {str(last_error)}")
+        raise last_error
 
 
 class ValidatorAgent:
@@ -320,48 +335,57 @@ class ValidatorAgent:
         """验证答案的正确性"""
         logger.info("验证者开始验证答案")
 
-        try:
-            if is_positive_sample:
-                system_prompt, user_prompt = self.prompts_config.format_validator_prompt(
-                    question=question or "",
-                    reference_answer=reference_answer or "",
-                    predicted_answer=predicted_answer or ""
+        last_error = None
+        max_retries = settings.MAX_RETRIES
+
+        for attempt in range(max_retries):
+            try:
+                if is_positive_sample:
+                    system_prompt, user_prompt = self.prompts_config.format_validator_prompt(
+                        question=question or "",
+                        reference_answer=reference_answer or "",
+                        predicted_answer=predicted_answer or ""
+                    )
+                else:
+                    system_prompt, user_prompt = self.prompts_config.format_negative_validator_prompt(
+                        question=question or "",
+                        reference_answer=reference_answer or "",
+                        predicted_answer=predicted_answer or ""
+                    )
+
+                financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+
+                response = self.llm_client.call_with_financial_data(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    financial_data_str=financial_data_str,
+                    temperature=llm_config.validator_temperature,
+                    max_tokens=llm_config.validator_max_tokens
                 )
-            else:
-                system_prompt, user_prompt = self.prompts_config.format_negative_validator_prompt(
-                    question=question or "",
-                    reference_answer=reference_answer or "",
-                    predicted_answer=predicted_answer or ""
+
+                result = extract_json_from_text(response)
+
+                validation = ValidationResult(
+                    is_valid=result.get("is_valid", False),
+                    similarity_score=result.get("similarity_score", 0.0),
+                    reason=result.get("reason", "")
                 )
 
-            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+                logger.info(
+                    f"验证结果 (尝试 {attempt + 1}/{max_retries}): {'通过' if validation.is_valid else '未通过'} "
+                    f"(相似度: {validation.similarity_score:.2f})"
+                )
 
-            response = self.llm_client.call_with_financial_data(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                financial_data_str=financial_data_str,
-                temperature=llm_config.validator_temperature,
-                max_tokens=llm_config.validator_max_tokens
-            )
+                return validation
 
-            result = extract_json_from_text(response)
+            except Exception as e:
+                last_error = e
+                logger.warning(f"验证者第 {attempt + 1}/{max_retries} 次失败: {str(e)[:100]}")
+                if attempt < max_retries - 1:
+                    continue
 
-            validation = ValidationResult(
-                is_valid=result.get("is_valid", False),
-                similarity_score=result.get("similarity_score", 0.0),
-                reason=result.get("reason", "")
-            )
-
-            logger.info(
-                f"验证结果: {'通过' if validation.is_valid else '未通过'} "
-                f"(相似度: {validation.similarity_score:.2f})"
-            )
-
-            return validation
-
-        except Exception as e:
-            logger.error(f"验证者执行失败: {str(e)}")
-            raise
+        logger.error(f"验证者 {max_retries} 次尝试全部失败: {str(last_error)}")
+        raise last_error
 
     def validate_strategy_sample(
         self,
@@ -373,38 +397,47 @@ class ValidatorAgent:
         """验证策略模型采样结果（8B样本标注）"""
         logger.info("验证者开始标注策略模型样本")
 
-        try:
-            system_prompt, user_prompt = self.prompts_config.format_sampling_validator_prompt(
-                question=question or "",
-                reference_answer=reference_answer or "",
-                predicted_answer=predicted_answer or ""
-            )
+        last_error = None
+        max_retries = settings.MAX_RETRIES
 
-            financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
+        for attempt in range(max_retries):
+            try:
+                system_prompt, user_prompt = self.prompts_config.format_sampling_validator_prompt(
+                    question=question or "",
+                    reference_answer=reference_answer or "",
+                    predicted_answer=predicted_answer or ""
+                )
 
-            response = self.llm_client.call_with_financial_data(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                financial_data_str=financial_data_str,
-                temperature=llm_config.validator_temperature,
-                max_tokens=llm_config.validator_max_tokens
-            )
+                financial_data_str = json.dumps(financial_data, ensure_ascii=False, indent=2) if financial_data else None
 
-            result = extract_json_from_text(response)
+                response = self.llm_client.call_with_financial_data(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    financial_data_str=financial_data_str,
+                    temperature=llm_config.validator_temperature,
+                    max_tokens=llm_config.validator_max_tokens
+                )
 
-            validation = ValidationResult(
-                is_valid=result.get("is_valid", False),
-                similarity_score=result.get("similarity_score", 0.0),
-                reason=result.get("reason", "")
-            )
+                result = extract_json_from_text(response)
 
-            logger.info(
-                f"策略样本标注: {'正样本' if validation.is_valid else '负样本'} "
-                f"(相似度: {validation.similarity_score:.2f})"
-            )
+                validation = ValidationResult(
+                    is_valid=result.get("is_valid", False),
+                    similarity_score=result.get("similarity_score", 0.0),
+                    reason=result.get("reason", "")
+                )
 
-            return validation
+                logger.info(
+                    f"策略样本标注 (尝试 {attempt + 1}/{max_retries}): {'正样本' if validation.is_valid else '负样本'} "
+                    f"(相似度: {validation.similarity_score:.2f})"
+                )
 
-        except Exception as e:
-            logger.error(f"策略样本验证失败: {str(e)}")
-            raise
+                return validation
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"策略样本验证第 {attempt + 1}/{max_retries} 次失败: {str(e)[:100]}")
+                if attempt < max_retries - 1:
+                    continue
+
+        logger.error(f"策略样本验证 {max_retries} 次尝试全部失败: {str(last_error)}")
+        raise last_error

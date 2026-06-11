@@ -60,7 +60,10 @@ class SystemSettings(BaseModel):
     
     # 验证通过阈值
     VALIDATION_THRESHOLD: float = Field(default=0.8, description="验证通过的语义相似度阈值")
-    
+
+    # 模型调用重试次数
+    MAX_RETRIES: int = Field(default=5, ge=1, le=10, description="模型调用 + JSON 解析重试次数")
+
     # 负样本生成比例
     NEGATIVE_SAMPLE_RATIO: float = Field(default=0.5, ge=0.0, le=1.0, description="负样本生成比例（0-1之间，默认0.5表示50%的样本为负样本）")
 

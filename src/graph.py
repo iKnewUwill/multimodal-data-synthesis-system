@@ -387,6 +387,175 @@ class MultimodalSynthesisGraph:
 
         return state
 
+    def retry_samples(self, task_input: FinancialTaskInput, existing_data: dict) -> FinancialTaskResult:
+        """部分重跑：只重跑缺失/损坏的样本（正样本/负样本/策略样本）"""
+        sample_sets_data = existing_data.get("sample_sets", [])
+        if not sample_sets_data:
+            logger.warning(f"[重跑] {task_input.公司名称}: sample_sets 为空，无法重跑")
+            return FinancialTaskResult(
+                task_id=task_input.task_id,
+                证券代码=task_input.证券代码,
+                公司名称=task_input.公司名称,
+                评估维度=task_input.评估维度,
+                financial_data=task_input.financial_data,
+                status=TaskStatus.FAILED,
+                valid_qa_count=0,
+                completed_at=datetime.now()
+            )
+
+        financial_data = dict(task_input.financial_data) if task_input.financial_data else {}
+
+        for ss_idx, ss in enumerate(sample_sets_data):
+            question = ss.get("question", "")
+            reference_answer = ss.get("standard_answer", "")
+            if not question:
+                logger.warning(f"[重跑] {task_input.公司名称} 问题{ss_idx + 1}: 缺少 question，跳过")
+                continue
+
+            # --- 检查正样本 ---
+            ps = ss.get("positive_sample")
+            ps_needs_retry = (
+                ps is None
+                or not ps.get("conclusion", "").strip()
+                or not ps.get("analysis_process")
+            )
+            if ps_needs_retry:
+                logger.info(f"[重跑] {task_input.公司名称} 问题{ss_idx + 1}: 重跑正样本")
+                try:
+                    output = self.solver.solve(
+                        financial_data=financial_data,
+                        question=question
+                    )
+                    validation = self.validator.validate(
+                        financial_data=financial_data,
+                        question=question,
+                        reference_answer=reference_answer,
+                        predicted_answer=output.answer,
+                        is_positive_sample=True
+                    )
+                    ss["positive_sample"] = self._build_sample_with_validation(
+                        source="positive_solver",
+                        is_positive=True,
+                        conclusion=output.conclusion,
+                        analysis_process=output.analysis_process,
+                        validation=validation,
+                        sample_index=1
+                    ).model_dump(mode="json")
+                except Exception as e:
+                    logger.error(f"[重跑] {task_input.公司名称} 正样本重跑失败: {str(e)[:100]}")
+
+            # --- 检查负样本 ---
+            ns = ss.get("negative_sample")
+            ns_needs_retry = (
+                ns is None
+                or not ns.get("conclusion", "").strip()
+                or not ns.get("analysis_process")
+            )
+            if ns_needs_retry:
+                logger.info(f"[重跑] {task_input.公司名称} 问题{ss_idx + 1}: 重跑负样本")
+                try:
+                    output = self.solver.solve_negative(
+                        financial_data=financial_data,
+                        question=question
+                    )
+                    validation = self.validator.validate(
+                        financial_data=financial_data,
+                        question=question,
+                        reference_answer=reference_answer,
+                        predicted_answer=output.answer,
+                        is_positive_sample=False
+                    )
+                    ss["negative_sample"] = self._build_sample_with_validation(
+                        source="negative_solver",
+                        is_positive=False,
+                        conclusion=output.conclusion,
+                        analysis_process=output.analysis_process,
+                        validation=validation,
+                        sample_index=1
+                    ).model_dump(mode="json")
+                except Exception as e:
+                    logger.error(f"[重跑] {task_input.公司名称} 负样本重跑失败: {str(e)[:100]}")
+
+            # --- 检查策略样本 ---
+            strat_samples = ss.get("strategy_samples", [])
+            needs_strat_retry = (
+                not isinstance(strat_samples, list)
+                or len(strat_samples) < settings.STRATEGY_SAMPLE_COUNT
+            )
+            # Also check if any individual strategy sample has empty content
+            if isinstance(strat_samples, list) and len(strat_samples) > 0:
+                all_ok = all(
+                    s.get("conclusion", "").strip() and s.get("analysis_process")
+                    for s in strat_samples
+                )
+                if all_ok and len(strat_samples) >= settings.STRATEGY_SAMPLE_COUNT:
+                    needs_strat_retry = False
+
+            if needs_strat_retry:
+                logger.info(f"[重跑] {task_input.公司名称} 问题{ss_idx + 1}: 重跑策略样本 x{settings.STRATEGY_SAMPLE_COUNT}")
+                new_strategy = []
+                for i in range(1, settings.STRATEGY_SAMPLE_COUNT + 1):
+                    try:
+                        sample_output = self.strategy_sampler.sample(
+                            financial_data=financial_data,
+                            question=question,
+                            sample_index=i
+                        )
+                        validation = self.validator.validate_strategy_sample(
+                            financial_data=financial_data,
+                            question=question,
+                            reference_answer=reference_answer,
+                            predicted_answer=sample_output.answer
+                        )
+                        new_strategy.append(self._build_sample_with_validation(
+                            source="strategy_model",
+                            is_positive=validation.is_valid,
+                            conclusion=sample_output.conclusion,
+                            analysis_process=sample_output.analysis_process,
+                            validation=validation,
+                            sample_index=i
+                        ).model_dump(mode="json"))
+                    except Exception as sample_err:
+                        logger.error(f"[重跑] 策略样本 #{i} 失败: {str(sample_err)[:100]}")
+                ss["strategy_samples"] = new_strategy
+
+        # Recalculate valid_qa_count
+        total_samples = 0
+        for ss in sample_sets_data:
+            total_samples += 1  # standard answer
+            if ss.get("positive_sample") and ss["positive_sample"].get("conclusion", "").strip():
+                total_samples += 1
+            if ss.get("negative_sample") and ss["negative_sample"].get("conclusion", "").strip():
+                total_samples += 1
+            total_samples += len(ss.get("strategy_samples", []))
+
+        existing_data["sample_sets"] = sample_sets_data
+        existing_data["valid_qa_count"] = total_samples
+        existing_data["completed_at"] = datetime.now().isoformat()
+
+        return FinancialTaskResult(
+            task_id=task_input.task_id,
+            证券代码=task_input.证券代码,
+            公司名称=task_input.公司名称,
+            评估维度=task_input.评估维度,
+            financial_data=task_input.financial_data,
+            status=TaskStatus.COMPLETED,
+            sample_sets=[
+                QuestionSampleSet(
+                    difficulty=ss.get("difficulty", 0),
+                    question=ss.get("question", ""),
+                    standard_answer=ss.get("standard_answer", ""),
+                    standard_analysis_process=ss.get("standard_analysis_process", {}),
+                    positive_sample=SampleWithValidation(**ss["positive_sample"]) if ss.get("positive_sample") else None,
+                    negative_sample=SampleWithValidation(**ss["negative_sample"]) if ss.get("negative_sample") else None,
+                    strategy_samples=[SampleWithValidation(**s) for s in ss.get("strategy_samples", [])]
+                )
+                for ss in sample_sets_data
+            ],
+            valid_qa_count=total_samples,
+            completed_at=datetime.now()
+        )
+
     def run(self, task_input: FinancialTaskInput, max_iterations: int = None) -> FinancialTaskResult:
         """运行工作流
 

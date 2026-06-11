@@ -33,7 +33,9 @@ class UIComponents:
                 with gr.Row():
                     start_btn = gr.Button("🚀 开始批量处理", variant="primary", size="lg")
                     stop_btn = gr.Button("⏹️ 停止", variant="stop", size="lg")
-                    refresh_btn = gr.Button("🔄 刷新任务列表", variant="secondary", size="lg")
+                    retry_failed_btn = gr.Button("🔄 重新处理失败任务", variant="secondary", size="lg")
+                    refresh_btn = gr.Button("🔃 刷新任务列表", variant="secondary", size="lg")
+                    validate_btn = gr.Button("🔍 检查已完成任务", variant="secondary", size="lg")
                 stop_status = gr.Markdown("")
 
             with gr.Column(scale=2):
@@ -76,7 +78,9 @@ class UIComponents:
             'strategy_sample_count': strategy_sample_count,
             'start_btn': start_btn,
             'stop_btn': stop_btn,
-            'refresh_btn': refresh_btn
+            'retry_failed_btn': retry_failed_btn,
+            'refresh_btn': refresh_btn,
+            'validate_btn': validate_btn
         }
 
         outputs = {

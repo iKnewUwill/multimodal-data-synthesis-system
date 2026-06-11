@@ -116,6 +116,29 @@ class MultimodalSynthesisUI:
             ]
         )
 
+        # Retry failed tasks button
+        inputs['retry_failed_btn'].click(
+            fn=self.handlers.retry_failed_tasks,
+            inputs=[inputs['max_iterations'], inputs['parallel_count']],
+            outputs=[
+                outputs['total_tasks'],
+                outputs['pending_tasks'],
+                outputs['processing_tasks'],
+                outputs['completed_tasks'],
+                outputs['failed_tasks'],
+                outputs['task_dataframe'],
+                outputs['log_display'],
+                outputs['progress_bar'],
+                outputs['status_text']
+            ]
+        )
+
+        # Validate completed tasks button
+        inputs['validate_btn'].click(
+            fn=self.handlers.validate_completed_tasks,
+            outputs=[outputs['log_display']]
+        )
+
         # Stop button
         inputs['stop_btn'].click(
             fn=self.handlers.stop_processing,

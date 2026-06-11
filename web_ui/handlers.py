@@ -328,6 +328,218 @@ class UIHandlers:
         self.is_running = False
         return "⏹️ 已停止处理"
 
+    def _retry_single_task(self, task: FinancialTaskInput):
+        """Retry missing samples for a single failed task (thread-safe)."""
+        import json as json_mod
+
+        result_file = settings.OUTPUT_DIR / f"{task.task_id}.json"
+        if not result_file.exists():
+            log_msg = f"[ERROR] 任务 {task.公司名称}: 结果文件不存在，跳过\n"
+            with self.log_lock:
+                self.log_queue.put(log_msg)
+            return FinancialTaskResult(
+                task_id=task.task_id,
+                证券代码=task.证券代码,
+                公司名称=task.公司名称,
+                评估维度=task.评估维度,
+                status=TaskStatus.FAILED,
+                completed_at=datetime.now()
+            )
+
+        try:
+            with open(result_file, "r", encoding="utf-8") as f:
+                existing_data = json_mod.load(f)
+        except Exception as e:
+            log_msg = f"[ERROR] 任务 {task.公司名称}: JSON 读取失败 - {str(e)[:80]}\n"
+            with self.log_lock:
+                self.log_queue.put(log_msg)
+            return FinancialTaskResult(
+                task_id=task.task_id,
+                证券代码=task.证券代码,
+                公司名称=task.公司名称,
+                评估维度=task.评估维度,
+                status=TaskStatus.FAILED,
+                completed_at=datetime.now()
+            )
+
+        log_msg = f"[INFO] 开始部分重跑: {task.公司名称} ({task.证券代码})\n"
+        with self.log_lock:
+            self.log_queue.put(log_msg)
+
+        try:
+            graph = MultimodalSynthesisGraph(llm_config, strategy_llm_config)
+            result = graph.retry_samples(task, existing_data)
+
+            output_file = settings.OUTPUT_DIR / f"{task.task_id}.json"
+            save_json(result.model_dump(mode='json'), output_file)
+
+            if result.status == TaskStatus.COMPLETED:
+                log_msg = f"[SUCCESS] 部分重跑完成: {task.公司名称} - {result.valid_qa_count} 个样本\n"
+            else:
+                log_msg = f"[ERROR] 部分重跑失败: {task.公司名称}\n"
+
+            with self.log_lock:
+                self.log_queue.put(log_msg)
+            return result
+
+        except Exception as e:
+            log_msg = f"[ERROR] 部分重跑异常: {task.公司名称} - {str(e)[:100]}\n"
+            with self.log_lock:
+                self.log_queue.put(log_msg)
+            return FinancialTaskResult(
+                task_id=task.task_id,
+                证券代码=task.证券代码,
+                公司名称=task.公司名称,
+                评估维度=task.评估维度,
+                status=TaskStatus.FAILED,
+                completed_at=datetime.now()
+            )
+
+    def retry_failed_tasks(self, max_iter, parallel_num) -> Generator:
+        """部分重跑：只重跑失败任务中缺失/损坏的样本（正样本/负样本/策略样本）"""
+        failed_tasks = self.task_manager.filter_tasks(status=TaskStatus.FAILED)
+        legacy_failed = self.task_manager.filter_tasks(status="失败")
+        seen_ids = {t.task_id for t in failed_tasks}
+        for t in legacy_failed:
+            if t.task_id not in seen_ids:
+                failed_tasks.append(t)
+
+        if not failed_tasks:
+            try:
+                all_tasks = self.task_manager.get_all_tasks()
+            except Exception:
+                all_tasks = []
+            task_dataframe = TaskDataConverter.tasks_to_dataframe(all_tasks)
+            yield (
+                str(len(all_tasks)),
+                "0", "0",
+                str(len([t for t in all_tasks if t.status == TaskStatus.COMPLETED])) if all_tasks else "0",
+                "0",
+                task_dataframe,
+                "<div class='log-box'>⚠️ 没有失败的任务需要重试</div>",
+                100,
+                "<div class='status-badge status-completed'>✅ 没有失败的任务</div>"
+            )
+            return
+
+        self.is_running = True
+        total_count = len(failed_tasks)
+
+        log_html = "<div class='log-box'>"
+        log_html += f"[INFO] 开始部分重跑 {total_count} 个失败任务（仅重跑缺失样本）\n"
+        log_html += f"[INFO] 并行数: {int(parallel_num)}\n"
+        log_html += f"[INFO] 粒度：正样本/负样本/策略样本 按需重跑\n"
+        log_html += "</div>"
+
+        initial_dataframe = TaskDataConverter.tasks_to_dataframe(self.task_manager.get_all_tasks())
+        yield (
+            str(len(self.task_manager.get_all_tasks())),
+            str(total_count),
+            "0",
+            "0",
+            "0",
+            initial_dataframe,
+            log_html,
+            0,
+            "<div class='status-badge status-running'>🔄 开始部分重跑</div>"
+        )
+
+        completed_count = 0
+        still_failed_count = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=int(parallel_num)) as executor:
+            future_to_task = {}
+            for task in failed_tasks:
+                if not self.is_running:
+                    break
+                self.task_manager.update_task_status(task.task_id, TaskStatus.PROCESSING)
+                future = executor.submit(self._retry_single_task, task)
+                future_to_task[future] = task
+
+            for future in concurrent.futures.as_completed(future_to_task):
+                if not self.is_running:
+                    break
+
+                task = future_to_task[future]
+                try:
+                    result = future.result()
+
+                    if result.status == TaskStatus.COMPLETED:
+                        self.task_manager.update_task_status(task.task_id, TaskStatus.COMPLETED)
+                        completed_count += 1
+                    else:
+                        self.task_manager.update_task_status(task.task_id, TaskStatus.FAILED)
+                        still_failed_count += 1
+
+                    all_tasks = self.task_manager.get_all_tasks()
+                    task_dataframe = TaskDataConverter.tasks_to_dataframe(all_tasks)
+
+                    log_html = "<div class='log-box'>"
+                    with self.log_lock:
+                        while not self.log_queue.empty():
+                            log_line = self.log_queue.get()
+                            if "[ERROR]" in log_line:
+                                log_html += f"<span class='log-error'>{log_line}</span>"
+                            elif "[SUCCESS]" in log_line:
+                                log_html += f"<span class='log-success'>{log_line}</span>"
+                            else:
+                                log_html += f"<span class='log-info'>{log_line}</span>"
+                    log_html += "</div>"
+
+                    progress = int((completed_count + still_failed_count) / total_count * 100)
+
+                    yield (
+                        str(len(all_tasks)),
+                        str(total_count - completed_count - still_failed_count),
+                        str(len([f for f in future_to_task if f.running()])),
+                        str(completed_count),
+                        str(still_failed_count),
+                        task_dataframe,
+                        log_html,
+                        progress,
+                        f"<div class='status-badge status-running'>🔄 部分重跑中: {completed_count + still_failed_count}/{total_count}</div>"
+                    )
+
+                except Exception as e:
+                    still_failed_count += 1
+                    self.task_manager.update_task_status(task.task_id, TaskStatus.FAILED)
+                    log_msg = f"[ERROR] 重跑任务异常: {task.公司名称} - {str(e)[:100]}\n"
+                    with self.log_lock:
+                        self.log_queue.put(log_msg)
+
+        self.is_running = False
+
+        all_tasks = self.task_manager.get_all_tasks()
+        task_dataframe = TaskDataConverter.tasks_to_dataframe(all_tasks)
+
+        log_html = "<div class='log-box'>"
+        with self.log_lock:
+            temp_logs = []
+            while not self.log_queue.empty():
+                temp_logs.append(self.log_queue.get())
+            for log_line in temp_logs:
+                self.log_queue.put(log_line)
+            for log_line in temp_logs:
+                if "[ERROR]" in log_line:
+                    log_html += f"<span class='log-error'>{log_line}</span>"
+                elif "[SUCCESS]" in log_line:
+                    log_html += f"<span class='log-success'>{log_line}</span>"
+                else:
+                    log_html += f"<span class='log-info'>{log_line}</span>"
+        log_html += "</div>"
+
+        yield (
+            str(len(all_tasks)),
+            "0",
+            "0",
+            str(completed_count),
+            str(still_failed_count),
+            task_dataframe,
+            log_html,
+            100,
+            f"<div class='status-badge status-completed'>✅ 部分重跑完成！成功: {completed_count}, 仍失败: {still_failed_count}</div>"
+        )
+
     def save_llm_config(
         self,
         api_key, base_url, model_name,
@@ -413,3 +625,184 @@ class UIHandlers:
             return f"✅ 策略模型采样次数已更新为 {int(count)}"
         except Exception as e:
             return f"❌ 更新失败：{str(e)}"
+
+    # === 输出完整性检查 ===
+
+    # 目标结构必需字段定义
+    _REQUIRED_TOP_LEVEL = [
+        "task_id", "证券代码", "公司名称", "评估维度",
+        "financial_data", "status", "sample_sets", "valid_qa_count", "completed_at"
+    ]
+    _REQUIRED_SAMPLE_SET = [
+        "difficulty", "question", "standard_answer", "standard_analysis_process",
+        "positive_sample", "negative_sample", "strategy_samples"
+    ]
+    _REQUIRED_SAMPLE = [
+        "sample_source", "is_positive_sample", "conclusion",
+        "analysis_process", "validation", "sample_index"
+    ]
+    _REQUIRED_VALIDATION = ["is_valid", "similarity_score", "reason"]
+
+    @classmethod
+    def _check_empty(cls, value) -> bool:
+        """Return True if value is considered empty/missing."""
+        if value is None:
+            return True
+        if isinstance(value, str) and value.strip() == "":
+            return True
+        if isinstance(value, dict) and len(value) == 0:
+            return True
+        return False
+
+    @classmethod
+    def _check_analysis_process(cls, process: dict, label: str, ss_idx: int) -> list:
+        """检查分析过程的步骤是否完整（步骤1/2/3及内容非空）"""
+        issues = []
+        if not isinstance(process, dict) or len(process) == 0:
+            issues.append(f"  问题{ss_idx + 1} {label}: analysis_process 为空")
+            return issues
+        for step_key in ("步骤1", "步骤2", "步骤3"):
+            if step_key not in process:
+                issues.append(f"  问题{ss_idx + 1} {label}: 缺少 [{step_key}]")
+            elif cls._check_empty(process[step_key]):
+                issues.append(f"  问题{ss_idx + 1} {label}: [{step_key}] 内容为空")
+        return issues
+
+    @classmethod
+    def _validate_sample(cls, sample: dict, label: str, ss_idx: int) -> list:
+        """Validate a single sample, return list of issue strings."""
+        issues = []
+        if sample is None:
+            issues.append(f"  问题{ss_idx + 1} {label}: 样本为 null")
+            return issues
+        for field in cls._REQUIRED_SAMPLE:
+            if field not in sample:
+                issues.append(f"  问题{ss_idx + 1} {label}: 缺少字段 [{field}]")
+            elif field == "analysis_process":
+                issues.extend(
+                    cls._check_analysis_process(sample[field], f"{label}.analysis_process", ss_idx)
+                )
+            elif field == "is_positive_sample":
+                # 布尔字段，只检查是否存在（None = 缺失，False/True = 有效值）
+                if sample[field] is None:
+                    issues.append(f"  问题{ss_idx + 1} {label}: 字段 [is_positive_sample] 为 null")
+            elif cls._check_empty(sample[field]):
+                issues.append(f"  问题{ss_idx + 1} {label}: 字段 [{field}] 为空")
+        # Validate nested validation
+        val = sample.get("validation")
+        if val and isinstance(val, dict):
+            for vf in cls._REQUIRED_VALIDATION:
+                if vf not in val:
+                    issues.append(f"  问题{ss_idx + 1} {label}.validation: 缺少字段 [{vf}]")
+                elif vf == "is_valid":
+                    if val[vf] is None:
+                        issues.append(f"  问题{ss_idx + 1} {label}.validation: 字段 [is_valid] 为 null")
+                elif cls._check_empty(val[vf]):
+                    issues.append(f"  问题{ss_idx + 1} {label}.validation: 字段 [{vf}] 为空")
+        elif val is None:
+            issues.append(f"  问题{ss_idx + 1} {label}.validation: 为 null")
+        return issues
+
+    def validate_completed_tasks(self) -> str:
+        """检查所有已完成任务的输出 JSON，排查必要字段为空值的情况。
+        对存在问题的任务，自动将其状态置为失败，以便重跑按钮处理。"""
+        import json as json_mod
+
+        completed_tasks = self.task_manager.filter_tasks(status=TaskStatus.COMPLETED)
+        if not completed_tasks:
+            return "✅ 没有已完成的任务需要检查"
+
+        all_issues = []
+        checked_count = 0
+        ok_count = 0
+        failed_count = 0
+
+        for task in completed_tasks:
+            result_file = settings.OUTPUT_DIR / f"{task.task_id}.json"
+            if not result_file.exists():
+                all_issues.append(f"❌ {task.公司名称} ({task.证券代码}): 结果文件不存在 [{task.task_id}.json]")
+                self.task_manager.update_task_status(task.task_id, TaskStatus.FAILED)
+                failed_count += 1
+                continue
+
+            try:
+                with open(result_file, "r", encoding="utf-8") as f:
+                    data = json_mod.load(f)
+            except Exception as e:
+                all_issues.append(f"❌ {task.公司名称} ({task.证券代码}): JSON 解析失败 - {str(e)}")
+                self.task_manager.update_task_status(task.task_id, TaskStatus.FAILED)
+                failed_count += 1
+                continue
+
+            checked_count += 1
+            task_issues = []
+
+            # 顶层字段
+            for field in self._REQUIRED_TOP_LEVEL:
+                if field not in data:
+                    task_issues.append(f"  顶层: 缺少字段 [{field}]")
+                elif field not in ("sample_sets",):
+                    if self._check_empty(data[field]):
+                        task_issues.append(f"  顶层: 字段 [{field}] 为空")
+
+            sample_sets = data.get("sample_sets", [])
+            if not isinstance(sample_sets, list) or len(sample_sets) == 0:
+                task_issues.append("  顶层: sample_sets 为空列表")
+            else:
+                for ss_idx, ss in enumerate(sample_sets):
+                    if not isinstance(ss, dict):
+                        task_issues.append(f"  问题{ss_idx + 1}: 不是有效对象")
+                        continue
+                    for field in self._REQUIRED_SAMPLE_SET:
+                        if field not in ss:
+                            task_issues.append(f"  问题{ss_idx + 1}: 缺少字段 [{field}]")
+                        elif field == "strategy_samples":
+                            strat = ss.get("strategy_samples")
+                            if strat is None:
+                                task_issues.append(f"  问题{ss_idx + 1}: strategy_samples 为 null")
+                            elif not isinstance(strat, list):
+                                task_issues.append(f"  问题{ss_idx + 1}: strategy_samples 不是列表")
+                            elif len(strat) == 0:
+                                task_issues.append(f"  问题{ss_idx + 1}: strategy_samples 为空（0个样本）")
+                            elif len(strat) < 3:
+                                task_issues.append(f"  问题{ss_idx + 1}: strategy_samples 样本数不足（少于3个）")
+                        elif field in ("positive_sample", "negative_sample"):
+                            task_issues.extend(
+                                self._validate_sample(ss.get(field), field, ss_idx)
+                            )
+                        elif field == "standard_analysis_process":
+                            task_issues.extend(
+                                self._check_analysis_process(
+                                    ss.get(field, {}), "standard_analysis_process", ss_idx
+                                )
+                            )
+                        else:
+                            if self._check_empty(ss[field]):
+                                task_issues.append(f"  问题{ss_idx + 1}: 字段 [{field}] 为空")
+
+                    # 检查 strategy_samples 内每个样本
+                    strat_samples = ss.get("strategy_samples", [])
+                    if isinstance(strat_samples, list):
+                        for si, strat in enumerate(strat_samples):
+                            task_issues.extend(
+                                self._validate_sample(strat, f"strategy_samples[{si}]", ss_idx)
+                            )
+
+            if task_issues:
+                all_issues.append(
+                    f"⚠️ {task.公司名称} ({task.证券代码}) [{task.task_id}]:\n"
+                    + "\n".join(task_issues)
+                )
+                # 将有问题的任务状态置为失败，以便重跑
+                self.task_manager.update_task_status(task.task_id, TaskStatus.FAILED)
+                failed_count += 1
+            else:
+                ok_count += 1
+
+        if not all_issues:
+            return f"✅ 全部 {checked_count} 个已完成任务的输出 JSON 完整性检查通过"
+
+        report = f"检查完成：{checked_count} 个已完成任务，{ok_count} 个通过，{len(all_issues)} 个存在问题（已自动标记为失败）\n\n"
+        report += f"可点击「重新处理失败任务」按钮对这 {failed_count} 个任务进行部分重跑（仅重跑缺失样本）\n\n"
+        report += "\n\n".join(all_issues)
+        return report

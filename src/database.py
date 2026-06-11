@@ -240,7 +240,7 @@ class DatabaseManager:
             
             if status:
                 query += " AND status = ?"
-                params.append(status.value)
+                params.append(status.value if isinstance(status, TaskStatus) else status)
             
             if 证券代码:
                 query += " AND 证券代码 LIKE ?"
@@ -261,6 +261,21 @@ class DatabaseManager:
             cursor.close()
             conn.close()
     
+    @staticmethod
+    def _parse_status(raw: str) -> TaskStatus:
+        """将数据库状态字符串转为 TaskStatus，兼容历史遗留值"""
+        try:
+            return TaskStatus(raw)
+        except ValueError:
+            # 兼容旧状态值：'失败' → '处理失败', '成功' → '已完成'
+            if "失败" in raw:
+                return TaskStatus.FAILED
+            if "完成" in raw or "成功" in raw:
+                return TaskStatus.COMPLETED
+            if "处理" in raw or "运行" in raw:
+                return TaskStatus.PROCESSING
+            return TaskStatus.PENDING
+
     def _row_to_task_input(self, row: tuple) -> FinancialTaskInput:
         """将数据库行转换为 FinancialTaskInput"""
         return FinancialTaskInput(
@@ -271,7 +286,7 @@ class DatabaseManager:
             评估维度=row[4],
             financial_data=json.loads(row[5]),
             is_positive_sample=(row[6]),
-            status=TaskStatus(row[7]),
+            status=self._parse_status(row[7]),
             created_at=datetime.fromisoformat(row[8]) if row[8] else None,
             started_at=datetime.fromisoformat(row[9]) if row[9] else None,
             completed_at=datetime.fromisoformat(row[10]) if row[10] else None,
